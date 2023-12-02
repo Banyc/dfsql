@@ -57,7 +57,8 @@ fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>>
         let atom = choice((col, literal, parens));
         let agg = agg_expr(expr.clone()).map(Box::new).map(Expr::Agg);
         let alias = alias_expr(expr.clone()).map(Box::new).map(Expr::Alias);
-        choice((atom, agg, alias))
+        let unary = unary_expr(expr.clone()).map(Box::new).map(Expr::Unary);
+        choice((atom, agg, alias, unary))
     })
 }
 
@@ -79,7 +80,7 @@ pub enum BinaryOperator {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnaryExpr {
-    pub operator: BinaryOperator,
+    pub operator: UnaryOperator,
     pub expr: Expr,
 }
 
@@ -87,6 +88,17 @@ pub struct UnaryExpr {
 pub enum UnaryOperator {
     Sub,
     Not,
+}
+
+fn unary_expr<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], UnaryExpr, extra::Err<Rich<'a, Token>>> + Clone {
+    let sub = just(Token::Sub).to(UnaryOperator::Sub);
+    let not = just(Token::Bang).to(UnaryOperator::Not);
+
+    choice((sub, not))
+        .then(expr)
+        .map(|(operator, expr)| UnaryExpr { operator, expr })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -260,6 +272,25 @@ fn string<'a>() -> impl Parser<'a, &'a str, String, extra::Err<Rich<'a, char>>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_unary_expr() {
+        let src = r#"(-sum (col "foo"))"#;
+        let lexer = lexer();
+        let tokens = lexer.parse(src).unwrap();
+        let parser = expr();
+        let expr = parser.parse(&tokens).unwrap();
+        assert_eq!(
+            expr,
+            Expr::Unary(Box::new(UnaryExpr {
+                operator: UnaryOperator::Sub,
+                expr: Expr::Agg(Box::new(AggExpr {
+                    operator: AggOperator::Sum,
+                    expr: Expr::Col(String::from("foo")),
+                }))
+            }))
+        );
+    }
 
     #[test]
     fn test_agg_expr() {
