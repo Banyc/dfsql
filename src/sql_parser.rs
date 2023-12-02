@@ -1,5 +1,27 @@
 use chumsky::prelude::*;
 
+pub fn parse(src: &str) -> Option<S> {
+    let lexer = lexer();
+    let Some(tokens) = lexer
+        .parse(src)
+        .into_result()
+        .map_err(|e| eprint!("{e:?}"))
+        .ok()
+    else {
+        return None;
+    };
+    let parser = parser();
+    let Some(ast) = parser
+        .parse(&tokens)
+        .into_result()
+        .map_err(|e| eprintln!("{e:?}"))
+        .ok()
+    else {
+        return None;
+    };
+    Some(ast)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct S {
     pub statements: Vec<Stat>,
@@ -234,7 +256,7 @@ fn string_token<'a>() -> impl Parser<'a, &'a [Token], String, extra::Err<Rich<'a
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum Token {
+pub enum Token {
     Select,
     GroupBy,
     Agg,
