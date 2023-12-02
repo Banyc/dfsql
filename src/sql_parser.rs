@@ -58,7 +58,10 @@ fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>>
         let agg = agg_expr(expr.clone()).map(Box::new).map(Expr::Agg);
         let alias = alias_expr(expr.clone()).map(Box::new).map(Expr::Alias);
         let unary = unary_expr(expr.clone()).map(Box::new).map(Expr::Unary);
-        choice((atom, agg, alias, unary))
+        let atom = choice((atom, agg, alias, unary));
+
+        let term = term_expr(atom);
+        sum_expr(term)
     })
 }
 
@@ -76,6 +79,38 @@ pub enum BinaryOperator {
     Mul,
     Div,
     Eq,
+}
+
+fn term_expr<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
+    let mul = just(Token::Mul).to(BinaryOperator::Mul);
+    let div = just(Token::Div).to(BinaryOperator::Div);
+    let operator = choice((mul, div));
+    binary_expr(operator, expr)
+}
+
+fn sum_expr<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
+    let add = just(Token::Add).to(BinaryOperator::Add);
+    let sub = just(Token::Sub).to(BinaryOperator::Sub);
+    let operator = choice((add, sub));
+    binary_expr(operator, expr)
+}
+
+fn binary_expr<'a>(
+    operator: impl Parser<'a, &'a [Token], BinaryOperator, extra::Err<Rich<'a, Token>>> + Clone,
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
+    expr.clone()
+        .foldl(operator.then(expr).repeated(), |left, (operator, right)| {
+            Expr::Binary(Box::new(BinaryExpr {
+                operator,
+                left,
+                right,
+            }))
+        })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -274,6 +309,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_sum_expr() {
+        let src = r#"(42 + -sum (col "foo"))"#;
+        let lexer = lexer();
+        let tokens = lexer.parse(src).unwrap();
+        let parser = expr();
+        let expr = parser.parse(&tokens).unwrap();
+        assert_eq!(
+            expr,
+            Expr::Binary(Box::new(BinaryExpr {
+                operator: BinaryOperator::Add,
+                left: Expr::Literal(Literal::Number(String::from("42"))),
+                right: Expr::Unary(Box::new(UnaryExpr {
+                    operator: UnaryOperator::Sub,
+                    expr: Expr::Agg(Box::new(AggExpr {
+                        operator: AggOperator::Sum,
+                        expr: Expr::Col(String::from("foo")),
+                    })),
+                })),
+            }))
+        );
+    }
+
+    #[test]
+    fn test_term_expr() {
+        let src = r#"(42 + 1 * -sum (col "foo"))"#;
+        let lexer = lexer();
+        let tokens = lexer.parse(src).unwrap();
+        let parser = expr();
+        let expr = parser.parse(&tokens).unwrap();
+        assert_eq!(
+            expr,
+            Expr::Binary(Box::new(BinaryExpr {
+                operator: BinaryOperator::Add,
+                left: Expr::Literal(Literal::Number(String::from("42"))),
+                right: Expr::Binary(Box::new(BinaryExpr {
+                    operator: BinaryOperator::Mul,
+                    left: Expr::Literal(Literal::Number(String::from("1"))),
+                    right: Expr::Unary(Box::new(UnaryExpr {
+                        operator: UnaryOperator::Sub,
+                        expr: Expr::Agg(Box::new(AggExpr {
+                            operator: AggOperator::Sum,
+                            expr: Expr::Col(String::from("foo")),
+                        })),
+                    })),
+                })),
+            }))
+        );
+    }
+
+    #[test]
     fn test_unary_expr() {
         let src = r#"(-sum (col "foo"))"#;
         let lexer = lexer();
@@ -287,7 +372,7 @@ mod tests {
                 expr: Expr::Agg(Box::new(AggExpr {
                     operator: AggOperator::Sum,
                     expr: Expr::Col(String::from("foo")),
-                }))
+                })),
             }))
         );
     }
