@@ -12,18 +12,25 @@ pub enum Stat {
     Filter(FilterStat),
 }
 
-// fn parser<'a>() -> impl Parser<'a, &'a [Token], S, extra::Err<Rich<'a, Token>>> {
-//     let select = todo!();
-//     let group_agg = todo!();
-//     let filter = todo!();
-//     let stat = choice((select, group_agg, filter));
+fn parser<'a>() -> impl Parser<'a, &'a [Token], S, extra::Err<Rich<'a, Token>>> + Clone {
+    let select = select_stat().map(Stat::Select);
+    let group_agg = group_agg_stat().map(Stat::GroupAgg);
+    let filter = filter_stat().map(Stat::Filter);
+    let stat = choice((select, group_agg, filter));
 
-//     stat.repeated().collect()
-// }
+    stat.repeated().collect().map(|statements| S { statements })
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectStat {
     pub columns: Vec<Expr>,
+}
+
+fn select_stat<'a>() -> impl Parser<'a, &'a [Token], SelectStat, extra::Err<Rich<'a, Token>>> + Clone
+{
+    just(Token::Select)
+        .ignore_then(expr().repeated().collect())
+        .map(|columns| SelectStat { columns })
 }
 
 #[derive(Debug, Clone, PartialEq)]
