@@ -32,9 +32,37 @@ pub struct GroupAggStat {
     pub agg: Vec<Expr>,
 }
 
+fn group_agg_stat<'a>(
+) -> impl Parser<'a, &'a [Token], GroupAggStat, extra::Err<Rich<'a, Token>>> + Clone {
+    // let columns =
+    //     column_names().nested_in(select_ref! { Token::Brackets(columns) => columns.as_slice() });
+    let columns = column_names();
+
+    just(Token::GroupBy)
+        .ignore_then(columns)
+        .then_ignore(just(Token::Agg))
+        .then(expr().repeated().collect())
+        .map(|(group_by, agg)| GroupAggStat { group_by, agg })
+}
+
+fn column_names<'a>(
+) -> impl Parser<'a, &'a [Token], Vec<String>, extra::Err<Rich<'a, Token>>> + Clone {
+    let col = just(Token::Col).ignore_then(string_token());
+    let literal = string_token();
+    let column = choice((col, literal));
+    column.repeated().collect()
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FilterStat {
     condition: Expr,
+}
+
+fn filter_stat<'a>() -> impl Parser<'a, &'a [Token], FilterStat, extra::Err<Rich<'a, Token>>> + Clone
+{
+    just(Token::Filter)
+        .ignore_then(expr())
+        .map(|condition| FilterStat { condition })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -61,7 +89,8 @@ fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>>
         let atom = choice((atom, agg, alias, unary));
 
         let term = term_expr(atom);
-        sum_expr(term)
+        let sum = sum_expr(term);
+        cmp_expr(sum)
     })
 }
 
@@ -79,6 +108,10 @@ pub enum BinaryOperator {
     Mul,
     Div,
     Eq,
+    LtEq,
+    Lt,
+    GtEq,
+    Gt,
 }
 
 fn term_expr<'a>(
@@ -96,6 +129,22 @@ fn sum_expr<'a>(
     let add = just(Token::Add).to(BinaryOperator::Add);
     let sub = just(Token::Sub).to(BinaryOperator::Sub);
     let operator = choice((add, sub));
+    binary_expr(operator, expr)
+}
+
+fn cmp_expr<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
+    let eq = just(Token::Eq).to(BinaryOperator::Eq);
+    let lt = just(Token::LeftAngle).to(BinaryOperator::Lt);
+    let lt_eq = just(Token::LeftAngle)
+        .then(just(Token::Eq))
+        .to(BinaryOperator::LtEq);
+    let gt = just(Token::RightAngle).to(BinaryOperator::Gt);
+    let gt_eq = just(Token::RightAngle)
+        .then(just(Token::Eq))
+        .to(BinaryOperator::GtEq);
+    let operator = choice((eq, lt_eq, lt, gt_eq, gt));
     binary_expr(operator, expr)
 }
 
@@ -309,6 +358,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_group_agg_stat() {
+        // let src = r#"group [col "foo" "bar"] agg sum col "foo" count col "bar""#;
+        let src = r#"group col "foo" "bar" agg sum col "foo" count col "bar""#;
+        let lexer = lexer();
+        let tokens = lexer.parse(src).unwrap();
+        let parser = group_agg_stat();
+        let stat = parser.parse(&tokens).unwrap();
+        assert_eq!(
+            stat,
+            GroupAggStat {
+                group_by: vec![String::from("foo"), String::from("bar")],
+                agg: vec![
+                    Expr::Agg(Box::new(AggExpr {
+                        operator: AggOperator::Sum,
+                        expr: Expr::Col(String::from("foo")),
+                    })),
+                    Expr::Agg(Box::new(AggExpr {
+                        operator: AggOperator::Count,
+                        expr: Expr::Col(String::from("bar")),
+                    })),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn test_filter_stat() {
+        let src = r#"filter col "foo" = 42"#;
+        let lexer = lexer();
+        let tokens = lexer.parse(src).unwrap();
+        let parser = filter_stat();
+        let stat = parser.parse(&tokens).unwrap();
+        assert_eq!(
+            stat,
+            FilterStat {
+                condition: Expr::Binary(Box::new(BinaryExpr {
+                    operator: BinaryOperator::Eq,
+                    left: Expr::Col(String::from("foo")),
+                    right: Expr::Literal(Literal::Number(String::from("42"))),
+                })),
+            }
+        );
+    }
+
+    #[test]
+    fn test_cmp_expr() {
+        let src = r#"42 >= -sum (col "foo")"#;
+        let lexer = lexer();
+        let tokens = lexer.parse(src).unwrap();
+        let parser = expr();
+        let expr = parser.parse(&tokens).unwrap();
+        assert_eq!(
+            expr,
+            Expr::Binary(Box::new(BinaryExpr {
+                operator: BinaryOperator::GtEq,
+                left: Expr::Literal(Literal::Number(String::from("42"))),
+                right: Expr::Unary(Box::new(UnaryExpr {
+                    operator: UnaryOperator::Sub,
+                    expr: Expr::Agg(Box::new(AggExpr {
+                        operator: AggOperator::Sum,
+                        expr: Expr::Col(String::from("foo")),
+                    })),
+                })),
+            }))
+        );
+    }
+
+    #[test]
     fn test_sum_expr() {
         let src = r#"(42 + -sum (col "foo"))"#;
         let lexer = lexer();
@@ -452,5 +569,3 @@ mod tests {
         );
     }
 }
-
-// `group "foo" agg [(sum "bar"), (mean "bar")]`
