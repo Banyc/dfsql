@@ -52,10 +52,12 @@ fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>>
         let parens = expr
             .clone()
             .nested_in(select_ref! { Token::Parens(parens) => parens.as_slice() });
+        let col = just(Token::Col).ignore_then(string_token()).map(Expr::Col);
         let literal = select_ref! { Token::Literal(lit) => lit.clone() }.map(Expr::Literal);
-        let atom = choice((literal, parens));
+        let atom = choice((col, literal, parens));
+        let agg = agg_expr(expr.clone()).map(Box::new).map(Expr::Agg);
         let alias = alias_expr(expr.clone()).map(Box::new).map(Expr::Alias);
-        choice((atom, alias))
+        choice((atom, agg, alias))
     })
 }
 
@@ -66,7 +68,7 @@ pub struct BinaryExpr {
     pub right: Expr,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinaryOperator {
     Add,
     Sub,
@@ -81,7 +83,7 @@ pub struct UnaryExpr {
     pub expr: Expr,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnaryOperator {
     Sub,
     Not,
@@ -93,10 +95,19 @@ pub struct AggExpr {
     pub expr: Expr,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AggOperator {
     Sum,
     Count,
+}
+
+fn agg_expr<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], AggExpr, extra::Err<Rich<'a, Token>>> + Clone {
+    let operator = select_ref! { Token::AggOperator(operator) => *operator };
+    operator
+        .then(expr)
+        .map(|(operator, expr)| AggExpr { operator, expr })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -109,10 +120,14 @@ fn alias_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], AliasExpr, extra::Err<Rich<'a, Token>>> + Clone {
     let alias = just(Token::Alias);
-    let name = select_ref! { Token::Literal(Literal::String(name)) => name.clone() };
+    let name = string_token();
     alias
         .ignore_then(name.then(expr))
         .map(|(name, expr)| AliasExpr { name, expr })
+}
+
+fn string_token<'a>() -> impl Parser<'a, &'a [Token], String, extra::Err<Rich<'a, Token>>> + Clone {
+    select_ref! { Token::Literal(Literal::String(name)) => name.clone() }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -123,6 +138,7 @@ enum Token {
     AggOperator(AggOperator),
     Filter,
     Alias,
+    Col,
     Parens(Vec<Token>),
     Brackets(Vec<Token>),
     LeftAngle,
@@ -154,6 +170,7 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let agg_op = choice((sum, count)).map(Token::AggOperator);
         let filter = text::keyword("filter").to(Token::Filter);
         let alias = text::keyword("alias").to(Token::Alias);
+        let col = text::keyword("col").to(Token::Col);
         let parens = tokens
             .clone()
             .delimited_by(just('(').padded(), just(')').padded())
@@ -186,6 +203,7 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
             agg_op,
             filter,
             alias,
+            col,
             brackets,
             parens,
             left_angle,
@@ -244,6 +262,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_agg_expr() {
+        let src = r#"(sum (col "foo"))"#;
+        let lexer = lexer();
+        let tokens = lexer.parse(src).unwrap();
+        let parser = expr();
+        let expr = parser.parse(&tokens).unwrap();
+        assert_eq!(
+            expr,
+            Expr::Agg(Box::new(AggExpr {
+                operator: AggOperator::Sum,
+                expr: Expr::Col(String::from("foo")),
+            }))
+        );
+    }
+
+    #[test]
     fn test_alias_expr() {
         let src = r#"(alias "foo" 42)"#;
         let lexer = lexer();
@@ -254,7 +288,7 @@ mod tests {
             expr,
             Expr::Alias(Box::new(AliasExpr {
                 name: String::from("foo"),
-                expr: Expr::Literal(Literal::Number(String::from("42")))
+                expr: Expr::Literal(Literal::Number(String::from("42"))),
             }))
         );
     }
@@ -270,7 +304,7 @@ mod tests {
     #[test]
     fn test_lexer() {
         let src =
-            r#"select group agg sum count filter alias [ ] ( ) < > hi + - * / = -42 0.1 "hi""#;
+            r#"select group agg sum count filter alias col [ ] ( ) < > hi + - * / = -42 0.1 "hi""#;
         let lexer = lexer();
         let tokens = lexer.parse(src).unwrap();
         assert_eq!(
@@ -283,6 +317,7 @@ mod tests {
                 Token::AggOperator(AggOperator::Count),
                 Token::Filter,
                 Token::Alias,
+                Token::Col,
                 Token::Brackets(vec![]),
                 Token::Parens(vec![]),
                 Token::LeftAngle,
