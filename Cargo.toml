@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 chumsky = { version = "=1.0.0-alpha.6" }
+polars = { version = "0.35.4", features = ["lazy", "strings", "lazy_regex"] }

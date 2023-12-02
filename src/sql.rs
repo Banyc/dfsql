@@ -84,7 +84,7 @@ fn column_names<'a>(
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FilterStat {
-    condition: Expr,
+    pub condition: Expr,
 }
 
 fn filter_stat<'a>() -> impl Parser<'a, &'a [Token], FilterStat, extra::Err<Rich<'a, Token>>> + Clone
@@ -121,6 +121,7 @@ fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>>
         let sum = sum_expr(term);
         cmp_expr(sum)
     })
+    .boxed()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -199,14 +200,14 @@ pub struct UnaryExpr {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnaryOperator {
-    Sub,
+    Neg,
     Not,
 }
 
 fn unary_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], UnaryExpr, extra::Err<Rich<'a, Token>>> + Clone {
-    let sub = just(Token::Sub).to(UnaryOperator::Sub);
+    let sub = just(Token::Sub).to(UnaryOperator::Neg);
     let not = just(Token::Bang).to(UnaryOperator::Not);
 
     choice((sub, not))
@@ -444,7 +445,7 @@ mod tests {
                 operator: BinaryOperator::GtEq,
                 left: Expr::Literal(Literal::Number(String::from("42"))),
                 right: Expr::Unary(Box::new(UnaryExpr {
-                    operator: UnaryOperator::Sub,
+                    operator: UnaryOperator::Neg,
                     expr: Expr::Agg(Box::new(AggExpr {
                         operator: AggOperator::Sum,
                         expr: Expr::Col(String::from("foo")),
@@ -467,7 +468,7 @@ mod tests {
                 operator: BinaryOperator::Add,
                 left: Expr::Literal(Literal::Number(String::from("42"))),
                 right: Expr::Unary(Box::new(UnaryExpr {
-                    operator: UnaryOperator::Sub,
+                    operator: UnaryOperator::Neg,
                     expr: Expr::Agg(Box::new(AggExpr {
                         operator: AggOperator::Sum,
                         expr: Expr::Col(String::from("foo")),
@@ -493,7 +494,7 @@ mod tests {
                     operator: BinaryOperator::Mul,
                     left: Expr::Literal(Literal::Number(String::from("1"))),
                     right: Expr::Unary(Box::new(UnaryExpr {
-                        operator: UnaryOperator::Sub,
+                        operator: UnaryOperator::Neg,
                         expr: Expr::Agg(Box::new(AggExpr {
                             operator: AggOperator::Sum,
                             expr: Expr::Col(String::from("foo")),
@@ -514,7 +515,7 @@ mod tests {
         assert_eq!(
             expr,
             Expr::Unary(Box::new(UnaryExpr {
-                operator: UnaryOperator::Sub,
+                operator: UnaryOperator::Neg,
                 expr: Expr::Agg(Box::new(AggExpr {
                     operator: AggOperator::Sum,
                     expr: Expr::Col(String::from("foo")),
