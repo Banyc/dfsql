@@ -1,9 +1,11 @@
 use std::{
+    borrow::Cow,
     io::Write,
     path::{Path, PathBuf},
 };
 
 use clap::Parser;
+use fancy_regex::Regex;
 use handler::{HandleLineResult, LineHandler};
 use polars::{
     frame::DataFrame,
@@ -183,10 +185,37 @@ fn write_sql_output<'a>(
 }
 
 #[derive(Debug, Helper, Completer, Hinter, Validator)]
-pub struct SqlHelper {}
+pub struct SqlHelper {
+    color: TerminalKeywordHighlighter,
+}
 impl SqlHelper {
     pub fn new() -> Self {
-        Self {}
+        let rules = [
+            ("select", color_keyword()),
+            ("group", color_keyword()),
+            ("agg", color_keyword()),
+            ("filter", color_keyword()),
+            ("limit", color_keyword()),
+            ("reverse", color_keyword()),
+            ("sum", color_expr_functor()),
+            ("count", color_expr_functor()),
+            ("alias", color_expr_functor()),
+            ("col", color_expr_functor()),
+            ("exclude", color_expr_functor()),
+            ("cast", color_expr_functor()),
+            ("if", color_control_flow()),
+            ("then", color_control_flow()),
+            ("else", color_control_flow()),
+            ("str", color_type()),
+            ("int", color_type()),
+            ("float", color_type()),
+        ];
+        let rules = rules.into_iter().map(|(keyword, color)| KeywordColor {
+            keyword: keyword.to_string(),
+            color,
+        });
+        let color = TerminalKeywordHighlighter::new(rules);
+        Self { color }
     }
 }
 impl Default for SqlHelper {
@@ -196,25 +225,7 @@ impl Default for SqlHelper {
 }
 impl Highlighter for SqlHelper {
     fn highlight<'l>(&self, line: &'l str, _pos: usize) -> std::borrow::Cow<'l, str> {
-        let line = color_keyword(line, "select");
-        let line = color_keyword(&line, "group");
-        let line = color_keyword(&line, "agg");
-        let line = color_keyword(&line, "filter");
-        let line = color_keyword(&line, "limit");
-        let line = color_keyword(&line, "reverse");
-        let line = color_expr(&line, "sum");
-        let line = color_expr(&line, "count");
-        let line = color_expr(&line, "alias");
-        let line = color_expr(&line, "col");
-        let line = color_expr(&line, "exclude");
-        let line = color_expr(&line, "cast");
-        let line = color_control_flow(&line, "if");
-        let line = color_control_flow(&line, "then");
-        let line = color_control_flow(&line, "else");
-        let line = color_type(&line, "str");
-        let line = color_type(&line, "int");
-        let line = color_type(&line, "float");
-        line.into()
+        self.color.replace(line).into()
     }
 
     fn highlight_char(&self, _line: &str, _pos: usize) -> bool {
@@ -222,36 +233,74 @@ impl Highlighter for SqlHelper {
     }
 }
 
-fn color_expr(src: &str, keyword: &str) -> String {
-    src.replace(keyword, &color_string_yellow(keyword))
+fn color_expr_functor() -> TerminalColor {
+    TerminalColor::Yellow
 }
 
-fn color_keyword(src: &str, keyword: &str) -> String {
-    src.replace(keyword, &color_string_blue(keyword))
+fn color_keyword() -> TerminalColor {
+    TerminalColor::Blue
 }
 
-fn color_control_flow(src: &str, keyword: &str) -> String {
-    src.replace(keyword, &color_string_magenta(keyword))
+fn color_control_flow() -> TerminalColor {
+    TerminalColor::Magenta
 }
 
-fn color_type(src: &str, keyword: &str) -> String {
-    src.replace(keyword, &color_string_green(keyword))
+fn color_type() -> TerminalColor {
+    TerminalColor::Green
 }
 
-fn color_string_green(string: &str) -> String {
-    format!("\x1b[1;32m{string}\x1b[0m")
+#[derive(Debug)]
+pub struct TerminalKeywordHighlighter {
+    rules: Vec<(KeywordColor, Regex)>,
+}
+impl TerminalKeywordHighlighter {
+    pub fn new(keyword_color_pairs: impl Iterator<Item = KeywordColor>) -> Self {
+        let rules = keyword_color_pairs
+            .map(|pair| {
+                let pattern = format!("(?<=\\s|^)({keyword})(?=\\s|$)", keyword = pair.keyword);
+                let regex = Regex::new(&pattern).unwrap();
+                (pair, regex)
+            })
+            .collect();
+        Self { rules }
+    }
+
+    pub fn replace(&self, string: &str) -> String {
+        let mut string: Cow<str> = string.into();
+        for (pair, regex) in &self.rules {
+            let replacer = format!(
+                "\x1b[1;{color}m{keyword}\x1b[0m",
+                color = pair.color.code(),
+                keyword = "$1"
+            );
+            string = regex.replace_all(&string, replacer).to_string().into();
+        }
+        string.into()
+    }
 }
 
-fn color_string_yellow(string: &str) -> String {
-    format!("\x1b[1;33m{string}\x1b[0m")
+#[derive(Debug)]
+pub struct KeywordColor {
+    pub keyword: String,
+    pub color: TerminalColor,
 }
 
-fn color_string_blue(string: &str) -> String {
-    format!("\x1b[1;34m{string}\x1b[0m")
+#[derive(Debug)]
+pub enum TerminalColor {
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
 }
-
-fn color_string_magenta(string: &str) -> String {
-    format!("\x1b[1;35m{string}\x1b[0m")
+impl TerminalColor {
+    pub fn code(&self) -> usize {
+        match self {
+            TerminalColor::Green => 32,
+            TerminalColor::Yellow => 33,
+            TerminalColor::Blue => 34,
+            TerminalColor::Magenta => 35,
+        }
+    }
 }
 
 fn main() -> anyhow::Result<()> {
