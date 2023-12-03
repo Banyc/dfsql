@@ -80,8 +80,12 @@ impl Cli {
             };
             if self.eager {
                 if let Err(e) = write_repl_output(df.clone(), &handler) {
-                    handler.pop_history();
                     eprintln!("{e}");
+                    // Rollback
+                    df = match handler.handle_line(df, String::from("undo")) {
+                        Ok(HandleLineResult::Updated(new)) => new,
+                        _ => panic!(),
+                    };
                 }
             }
         }
@@ -146,10 +150,6 @@ pub mod handler {
 
         pub fn history(&self) -> &Vec<String> {
             &self.history
-        }
-
-        pub fn pop_history(&mut self) {
-            self.history.pop();
         }
     }
 
