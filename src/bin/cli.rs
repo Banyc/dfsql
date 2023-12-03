@@ -10,7 +10,9 @@ use polars::{
     io::{csv::CsvWriter, SerWriter},
     lazy::frame::{LazyCsvReader, LazyFileListReader, LazyFrame},
 };
-use rustyline::{error::ReadlineError, DefaultEditor};
+use rustyline::{
+    error::ReadlineError, highlight::Highlighter, Completer, Editor, Helper, Hinter, Validator,
+};
 
 #[derive(Debug, Parser)]
 pub struct Cli {
@@ -42,7 +44,8 @@ impl Cli {
         if self.eager {
             write_repl_output(df.clone(), &handler)?;
         }
-        let mut rl = DefaultEditor::new()?;
+        let mut rl = Editor::new()?;
+        rl.set_helper(Some(SqlHelper::new()));
         loop {
             let line = rl.readline("> ");
             let line = match line {
@@ -160,6 +163,53 @@ fn write_sql_output<'a>(
         output.write_all("\n".as_bytes())?;
     }
     Ok(())
+}
+
+#[derive(Debug, Helper, Completer, Hinter, Validator)]
+pub struct SqlHelper {}
+impl SqlHelper {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+impl Default for SqlHelper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl Highlighter for SqlHelper {
+    fn highlight<'l>(&self, line: &'l str, _pos: usize) -> std::borrow::Cow<'l, str> {
+        let line = color_keyword(line, "select");
+        let line = color_keyword(&line, "group");
+        let line = color_keyword(&line, "agg");
+        let line = color_keyword(&line, "filter");
+        let line = color_expr(&line, "sum");
+        let line = color_expr(&line, "count");
+        let line = color_expr(&line, "alias");
+        let line = color_expr(&line, "col");
+        let line = color_expr(&line, "exclude");
+        line.into()
+    }
+
+    fn highlight_char(&self, _line: &str, _pos: usize) -> bool {
+        true
+    }
+}
+
+fn color_expr(src: &str, keyword: &str) -> String {
+    src.replace(keyword, &color_string_yellow(keyword))
+}
+
+fn color_keyword(src: &str, keyword: &str) -> String {
+    src.replace(keyword, &color_string_blue(keyword))
+}
+
+fn color_string_yellow(string: &str) -> String {
+    format!("\x1b[1;33m{string}\x1b[0m")
+}
+
+fn color_string_blue(string: &str) -> String {
+    format!("\x1b[1;34m{string}\x1b[0m")
 }
 
 fn main() -> anyhow::Result<()> {
