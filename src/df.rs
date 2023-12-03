@@ -42,6 +42,7 @@ fn convert_expr(expr: &sql::Expr) -> polars::lazy::dsl::Expr {
             sql::Literal::Int(number) => lit(number.parse::<i64>().unwrap()),
             sql::Literal::Float(number) => lit(number.parse::<f64>().unwrap()),
             sql::Literal::Bool(bool) => lit(*bool),
+            sql::Literal::Null => lit(NULL),
         },
         sql::Expr::Binary(binary) => {
             let left = convert_expr(&binary.left);

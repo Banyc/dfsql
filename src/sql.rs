@@ -454,6 +454,7 @@ pub enum Literal {
     Int(String),
     Float(String),
     Bool(bool),
+    Null,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -528,7 +529,8 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let bool_true = text::keyword("true").to(Literal::Bool(true));
         let bool_false = text::keyword("false").to(Literal::Bool(false));
         let bool = choice((bool_true, bool_false));
-        let literal = choice((pos_float, pos_int, bool, string)).map(Token::Literal);
+        let null = text::keyword("null").to(Literal::Null);
+        let literal = choice((pos_float, pos_int, bool, null, string)).map(Token::Literal);
 
         let ident = text::ident().map(ToString::to_string).map(Token::Variable);
 
