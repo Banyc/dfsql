@@ -18,12 +18,16 @@ use rustyline::{
 
 #[derive(Debug, Parser)]
 pub struct Cli {
+    /// Input file containing a data frame
     #[clap(short, long)]
     input: PathBuf,
+    /// Output file storing the modified data frame
     #[clap(short, long)]
     output: Option<PathBuf>,
+    /// Output file storing the effective SQL statements
     #[clap(short, long)]
     sql_output: Option<PathBuf>,
+    /// Evaluate the data frame for every input line
     #[clap(short, long, default_value_t = false)]
     eager: bool,
 }
@@ -200,6 +204,7 @@ impl SqlHelper {
             ("sort", color_keyword()),
             ("sum", color_expr_functor()),
             ("count", color_expr_functor()),
+            ("first", color_expr_functor()),
             ("alias", color_expr_functor()),
             ("col", color_expr_functor()),
             ("exclude", color_expr_functor()),

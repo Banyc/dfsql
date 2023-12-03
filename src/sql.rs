@@ -309,6 +309,7 @@ pub struct UnaryAggExpr {
 pub enum AggOperator {
     Sum,
     Count,
+    First,
 }
 
 fn unary_agg_expr<'a>(
@@ -475,7 +476,8 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
 
         let sum = text::keyword("sum").to(AggOperator::Sum);
         let count = text::keyword("count").to(AggOperator::Count);
-        let agg_op = choice((sum, count)).map(Token::AggOperator);
+        let first = text::keyword("first").to(AggOperator::First);
+        let agg_op = choice((sum, count, first)).map(Token::AggOperator);
 
         let alias = text::keyword("alias").to(Token::Alias);
         let col = text::keyword("col").to(Token::Col);
