@@ -35,6 +35,7 @@ pub enum Stat {
     Limit(LimitStat),
     Reverse,
     Sort(SortStat),
+    Describe,
 }
 
 fn parser<'a>() -> impl Parser<'a, &'a [Token], S, extra::Err<Rich<'a, Token>>> + Clone {
@@ -44,7 +45,8 @@ fn parser<'a>() -> impl Parser<'a, &'a [Token], S, extra::Err<Rich<'a, Token>>> 
     let limit = limit_stat().map(Stat::Limit);
     let reverse = just(Token::Reverse).to(Stat::Reverse);
     let sort = sort_stat().map(Stat::Sort);
-    let stat = choice((select, group_agg, filter, limit, reverse, sort));
+    let describe = just(Token::Describe).to(Stat::Describe);
+    let stat = choice((select, group_agg, filter, limit, reverse, sort, describe));
 
     stat.repeated().collect().map(|statements| S { statements })
 }
@@ -428,6 +430,7 @@ pub enum Token {
     Limit,
     Reverse,
     Sort,
+    Describe,
     AggOperator(AggOperator),
     Alias,
     Col,
@@ -479,7 +482,10 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let limit = text::keyword("limit").to(Token::Limit);
         let reverse = text::keyword("reverse").to(Token::Reverse);
         let sort = text::keyword("sort").to(Token::Sort);
-        let statement = choice((select, group_by, agg, filter, limit, reverse, sort));
+        let describe = text::keyword("describe").to(Token::Describe);
+        let statement = choice((
+            select, group_by, agg, filter, limit, reverse, sort, describe,
+        ));
 
         let sum = text::keyword("sum").to(AggOperator::Sum);
         let count = text::keyword("count").to(AggOperator::Count);

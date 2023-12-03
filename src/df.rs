@@ -27,6 +27,16 @@ fn apply_stat(df: LazyFrame, stat: &sql::Stat) -> LazyFrame {
         }
         sql::Stat::Reverse => df.reverse(),
         sql::Stat::Sort(sort) => df.sort(&sort.column, Default::default()),
+        sql::Stat::Describe => {
+            let old = df.clone();
+            let df = match old.clone().collect() {
+                Ok(df) => df,
+                // Return the erroneous LazyFrame so that the error is still preserved
+                Err(_) => return old,
+            };
+            let df = df.describe(None).unwrap();
+            df.lazy()
+        }
     }
 }
 

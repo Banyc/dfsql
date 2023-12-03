@@ -205,6 +205,7 @@ impl SqlHelper {
             ("limit", color_keyword()),
             ("reverse", color_keyword()),
             ("sort", color_keyword()),
+            ("describe", color_keyword()),
             ("sum", color_expr_functor()),
             ("count", color_expr_functor()),
             ("first", color_expr_functor()),
