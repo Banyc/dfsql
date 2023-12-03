@@ -34,6 +34,7 @@ pub enum Stat {
     Filter(FilterStat),
     Limit(LimitStat),
     Reverse,
+    Sort(SortStat),
 }
 
 fn parser<'a>() -> impl Parser<'a, &'a [Token], S, extra::Err<Rich<'a, Token>>> + Clone {
@@ -42,7 +43,8 @@ fn parser<'a>() -> impl Parser<'a, &'a [Token], S, extra::Err<Rich<'a, Token>>> 
     let filter = filter_stat().map(Stat::Filter);
     let limit = limit_stat().map(Stat::Limit);
     let reverse = just(Token::Reverse).to(Stat::Reverse);
-    let stat = choice((select, group_agg, filter, limit, reverse));
+    let sort = sort_stat().map(Stat::Sort);
+    let stat = choice((select, group_agg, filter, limit, reverse, sort));
 
     stat.repeated().collect().map(|statements| S { statements })
 }
@@ -106,6 +108,17 @@ fn limit_stat<'a>() -> impl Parser<'a, &'a [Token], LimitStat, extra::Err<Rich<'
     just(Token::Limit)
         .ignore_then(select_ref! { Token::Literal(Literal::Int(rows)) => rows.clone() })
         .map(|rows| LimitStat { rows })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SortStat {
+    pub column: String,
+}
+
+fn sort_stat<'a>() -> impl Parser<'a, &'a [Token], SortStat, extra::Err<Rich<'a, Token>>> + Clone {
+    just(Token::Sort)
+        .ignore_then(lax_col_name())
+        .map(|column| SortStat { column })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -375,6 +388,7 @@ pub enum Token {
     Filter,
     Limit,
     Reverse,
+    Sort,
     AggOperator(AggOperator),
     Alias,
     Col,
@@ -424,7 +438,8 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let filter = text::keyword("filter").to(Token::Filter);
         let limit = text::keyword("limit").to(Token::Limit);
         let reverse = text::keyword("reverse").to(Token::Reverse);
-        let statement = choice((select, group_by, agg, filter, limit, reverse));
+        let sort = text::keyword("sort").to(Token::Sort);
+        let statement = choice((select, group_by, agg, filter, limit, reverse, sort));
 
         let sum = text::keyword("sum").to(AggOperator::Sum);
         let count = text::keyword("count").to(AggOperator::Count);

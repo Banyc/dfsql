@@ -26,6 +26,7 @@ fn apply_stat(df: LazyFrame, stat: &sql::Stat) -> LazyFrame {
             df.limit(rows)
         }
         sql::Stat::Reverse => df.reverse(),
+        sql::Stat::Sort(sort) => df.sort(&sort.column, Default::default()),
     }
 }
 
