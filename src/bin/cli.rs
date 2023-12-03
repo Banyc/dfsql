@@ -208,6 +208,7 @@ impl SqlHelper {
             ("sum", color_expr_functor()),
             ("count", color_expr_functor()),
             ("first", color_expr_functor()),
+            ("last", color_expr_functor()),
             ("alias", color_expr_functor()),
             ("col", color_expr_functor()),
             ("exclude", color_expr_functor()),
