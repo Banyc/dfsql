@@ -162,7 +162,7 @@ fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>>
 }
 
 fn lax_col_name<'a>() -> impl Parser<'a, &'a [Token], String, extra::Err<Rich<'a, Token>>> + Clone {
-    choice((col_expr(), string_token(), variable_token()))
+    choice((col_expr(), variable_token()))
 }
 
 fn col_expr<'a>() -> impl Parser<'a, &'a [Token], String, extra::Err<Rich<'a, Token>>> + Clone {
