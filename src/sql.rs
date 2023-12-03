@@ -76,9 +76,7 @@ fn group_agg_stat<'a>(
 
 fn column_names<'a>(
 ) -> impl Parser<'a, &'a [Token], Vec<String>, extra::Err<Rich<'a, Token>>> + Clone {
-    let col = just(Token::Col).ignore_then(string_token());
-    let literal = string_token();
-    let column = choice((col, literal));
+    let column = lax_col_name();
     column.repeated().collect()
 }
 
@@ -109,7 +107,7 @@ fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>>
         let parens = expr
             .clone()
             .nested_in(select_ref! { Token::Parens(parens) => parens.as_slice() });
-        let col = just(Token::Col).ignore_then(string_token()).map(Expr::Col);
+        let col = col_expr().map(Expr::Col);
         let literal = select_ref! { Token::Literal(lit) => lit.clone() }.map(Expr::Literal);
         let atom = choice((col, literal, parens));
         let agg = agg_expr(expr.clone()).map(Box::new).map(Expr::Agg);
@@ -122,6 +120,16 @@ fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>>
         cmp_expr(sum)
     })
     .boxed()
+}
+
+fn lax_col_name<'a>() -> impl Parser<'a, &'a [Token], String, extra::Err<Rich<'a, Token>>> + Clone {
+    choice((col_expr(), string_token(), variable_token()))
+}
+
+fn col_expr<'a>() -> impl Parser<'a, &'a [Token], String, extra::Err<Rich<'a, Token>>> + Clone {
+    let any = just(Token::Mul).to(String::from("*"));
+    let name = choice((string_token(), variable_token(), any));
+    just(Token::Col).ignore_then(name)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -246,7 +254,7 @@ fn alias_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], AliasExpr, extra::Err<Rich<'a, Token>>> + Clone {
     let alias = just(Token::Alias);
-    let name = string_token();
+    let name = lax_col_name();
     alias
         .ignore_then(name.then(expr))
         .map(|(name, expr)| AliasExpr { name, expr })
@@ -254,6 +262,11 @@ fn alias_expr<'a>(
 
 fn string_token<'a>() -> impl Parser<'a, &'a [Token], String, extra::Err<Rich<'a, Token>>> + Clone {
     select_ref! { Token::Literal(Literal::String(name)) => name.clone() }
+}
+
+fn variable_token<'a>() -> impl Parser<'a, &'a [Token], String, extra::Err<Rich<'a, Token>>> + Clone
+{
+    select_ref! { Token::Variable(name) => name.clone() }
 }
 
 #[derive(Debug, Clone, PartialEq)]
