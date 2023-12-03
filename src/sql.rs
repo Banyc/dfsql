@@ -117,6 +117,7 @@ pub enum Expr {
     Unary(Box<UnaryExpr>),
     Agg(Box<AggExpr>),
     Alias(Box<AliasExpr>),
+    Conditional(Box<ConditionalExpr>),
 }
 
 fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -131,7 +132,10 @@ fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>>
         let agg = agg_expr(expr.clone()).map(Box::new).map(Expr::Agg);
         let alias = alias_expr(expr.clone()).map(Box::new).map(Expr::Alias);
         let unary = unary_expr(expr.clone()).map(Box::new).map(Expr::Unary);
-        let atom = choice((atom, agg, alias, unary)).boxed();
+        let conditional = conditional_expr(expr.clone())
+            .map(Box::new)
+            .map(Expr::Conditional);
+        let atom = choice((atom, agg, alias, unary, conditional)).boxed();
 
         let term = term_expr(atom);
         let sum = sum_expr(term);
@@ -302,6 +306,40 @@ fn alias_expr<'a>(
         .map(|(name, expr)| AliasExpr { name, expr })
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConditionalExpr {
+    pub first_case: ConditionalCase,
+    pub other_cases: Vec<ConditionalCase>,
+    pub otherwise: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConditionalCase {
+    pub when: Expr,
+    pub then: Expr,
+}
+
+fn conditional_expr<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], ConditionalExpr, extra::Err<Rich<'a, Token>>> + Clone {
+    let case = just(Token::If)
+        .ignore_then(expr.clone())
+        .then_ignore(just(Token::Then))
+        .then(expr.clone())
+        .map(|(when, then)| ConditionalCase { when, then });
+    let first_case = case.clone();
+    let other_cases = case.repeated().collect();
+    let otherwise = just(Token::Else).ignore_then(expr.clone());
+    first_case
+        .then(other_cases)
+        .then(otherwise)
+        .map(|((first_case, other_cases), otherwise)| ConditionalExpr {
+            first_case,
+            other_cases,
+            otherwise,
+        })
+}
+
 fn string_token<'a>() -> impl Parser<'a, &'a [Token], String, extra::Err<Rich<'a, Token>>> + Clone {
     select_ref! { Token::Literal(Literal::String(name)) => name.clone() }
 }
@@ -323,6 +361,9 @@ pub enum Token {
     Alias,
     Col,
     Exclude,
+    If,
+    Then,
+    Else,
     Parens(Vec<Token>),
     Brackets(Vec<Token>),
     LeftAngle,
@@ -362,6 +403,10 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let alias = text::keyword("alias").to(Token::Alias);
         let col = text::keyword("col").to(Token::Col);
         let exclude = text::keyword("exclude").to(Token::Exclude);
+        let when = text::keyword("if").to(Token::If);
+        let then = text::keyword("then").to(Token::Then);
+        let otherwise = text::keyword("else").to(Token::Else);
+        let conditional = choice((when, then, otherwise));
         let parens = tokens
             .clone()
             .delimited_by(just('(').padded(), just(')').padded())
@@ -407,6 +452,7 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
             alias,
             col,
             exclude,
+            conditional,
             brackets,
             parens,
             left_angle,

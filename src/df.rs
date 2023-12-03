@@ -77,5 +77,27 @@ fn convert_expr(expr: &sql::Expr) -> polars::lazy::dsl::Expr {
             let expr = convert_expr(&alias.expr);
             expr.alias(&alias.name)
         }
+        sql::Expr::Conditional(conditional) => {
+            enum Case {
+                Then(polars::lazy::dsl::Then),
+                ChainedThen(polars::lazy::dsl::ChainedThen),
+            }
+            let when_expr = convert_expr(&conditional.first_case.when);
+            let then_expr = convert_expr(&conditional.first_case.then);
+            let mut case = Case::Then(when(when_expr).then(then_expr));
+            for case_expr in &conditional.other_cases {
+                let when_expr = convert_expr(&case_expr.when);
+                let then_expr = convert_expr(&case_expr.then);
+                case = Case::ChainedThen(match case {
+                    Case::Then(case) => case.when(when_expr).then(then_expr),
+                    Case::ChainedThen(case) => case.when(when_expr).then(then_expr),
+                });
+            }
+            let otherwise = convert_expr(&conditional.otherwise);
+            match case {
+                Case::Then(case) => case.otherwise(otherwise),
+                Case::ChainedThen(case) => case.otherwise(otherwise),
+            }
+        }
     }
 }
