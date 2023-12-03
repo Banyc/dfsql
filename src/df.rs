@@ -76,6 +76,8 @@ fn convert_expr(expr: &sql::Expr) -> polars::lazy::dsl::Expr {
                     sql::AggOperator::Count => expr.count(),
                     sql::AggOperator::First => expr.first(),
                     sql::AggOperator::Last => expr.last(),
+                    sql::AggOperator::Sort => expr.sort(false),
+                    sql::AggOperator::Reverse => expr.reverse(),
                 }
             }
             sql::AggExpr::Standalone(standalone) => match standalone.operator {

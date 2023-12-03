@@ -311,12 +311,17 @@ pub enum AggOperator {
     Count,
     First,
     Last,
+    Sort,
+    Reverse,
 }
 
 fn unary_agg_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], UnaryAggExpr, extra::Err<Rich<'a, Token>>> + Clone {
     let operator = select_ref! { Token::AggOperator(operator) => *operator };
+    let sort = just(Token::Sort).to(AggOperator::Sort);
+    let reverse = just(Token::Reverse).to(AggOperator::Reverse);
+    let operator = choice((operator, sort, reverse));
     operator
         .then(expr)
         .map(|(operator, expr)| UnaryAggExpr { operator, expr })
