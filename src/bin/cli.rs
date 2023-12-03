@@ -60,9 +60,17 @@ impl Cli {
             };
             let _ = rl.add_history_entry(&line);
             df = match handler.handle_line(df.clone(), line) {
-                HandleLineResult::Exit => break,
-                HandleLineResult::Updated(new) => new,
-                HandleLineResult::Continue => continue,
+                Ok(HandleLineResult::Exit) => break,
+                Ok(HandleLineResult::Updated(new)) => new,
+                Ok(HandleLineResult::Continue) => continue,
+                Ok(HandleLineResult::Schema(schema)) => {
+                    println!("{schema:?}");
+                    continue;
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    break;
+                }
             };
             if self.eager {
                 if let Err(e) = write_repl_output(df.clone(), &handler) {
@@ -79,7 +87,7 @@ impl Cli {
 }
 
 pub mod handler {
-    use polars::lazy::frame::LazyFrame;
+    use polars::{lazy::frame::LazyFrame, prelude::SchemaRef};
     use sql_repl::{df::apply, sql};
 
     pub struct LineHandler {
@@ -95,28 +103,36 @@ pub mod handler {
             }
         }
 
-        pub fn handle_line(&mut self, df: LazyFrame, line: String) -> HandleLineResult {
+        pub fn handle_line(
+            &mut self,
+            df: LazyFrame,
+            line: String,
+        ) -> anyhow::Result<HandleLineResult> {
             let trimmed_line = line.trim();
             if trimmed_line == "exit" || trimmed_line == "quit" {
-                return HandleLineResult::Exit;
+                return Ok(HandleLineResult::Exit);
             }
             if trimmed_line == "undo" {
                 self.history.pop();
                 if self.history.is_empty() {
-                    return HandleLineResult::Updated(self.original_df.clone());
+                    return Ok(HandleLineResult::Updated(self.original_df.clone()));
                 }
                 let sql = self.history.iter().map(|s| sql::parse(s).unwrap());
                 let df = apply_history(self.original_df.clone(), sql);
-                return HandleLineResult::Updated(df);
+                return Ok(HandleLineResult::Updated(df));
+            }
+            if trimmed_line == "schema" {
+                let schema = df.schema()?;
+                return Ok(HandleLineResult::Schema(schema));
             }
             let Some(sql) = sql::parse(&line) else {
-                return HandleLineResult::Continue;
+                return Ok(HandleLineResult::Continue);
             };
             let df = apply(df, &sql);
             if !trimmed_line.is_empty() {
                 self.history.push(line);
             }
-            HandleLineResult::Updated(df)
+            Ok(HandleLineResult::Updated(df))
         }
 
         pub fn history(&self) -> &Vec<String> {
@@ -132,6 +148,7 @@ pub mod handler {
         Exit,
         Updated(LazyFrame),
         Continue,
+        Schema(SchemaRef),
     }
 
     fn apply_history(df: LazyFrame, sql: impl Iterator<Item = sql::S>) -> LazyFrame {
