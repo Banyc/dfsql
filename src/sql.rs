@@ -125,7 +125,8 @@ fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>>
         let parens = expr
             .clone()
             .nested_in(select_ref! { Token::Parens(parens) => parens.as_slice() });
-        let col = col_expr().map(Expr::Col);
+        // let col = col_expr().map(Expr::Col);
+        let col = lax_col_name().map(Expr::Col);
         let exclude = exclude_expr().map(Expr::Exclude);
         let literal = select_ref! { Token::Literal(lit) => lit.clone() }.map(Expr::Literal);
         let atom = choice((col, exclude, literal, parens));
