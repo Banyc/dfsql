@@ -93,6 +93,12 @@ fn convert_expr(expr: &sql::Expr) -> polars::lazy::dsl::Expr {
             sql::AggExpr::Standalone(standalone) => match standalone.operator {
                 sql::StandaloneAggOperator::Count => count(),
             },
+            sql::AggExpr::SortBy(sort_by) => {
+                let columns: Vec<_> = sort_by.pairs.iter().map(|(c, _)| convert_expr(c)).collect();
+                let descending: Vec<_> = sort_by.pairs.iter().map(|(_, d)| *d).collect();
+                let expr = convert_expr(&sort_by.expr);
+                expr.sort_by(columns, descending)
+            }
         },
         sql::Expr::Alias(alias) => {
             let expr = convert_expr(&alias.expr);

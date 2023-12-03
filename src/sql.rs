@@ -291,14 +291,34 @@ fn unary_expr<'a>(
 pub enum AggExpr {
     Unary(UnaryAggExpr),
     Standalone(StandaloneAggExpr),
+    SortBy(SortByExpr),
 }
 
 fn agg_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], AggExpr, extra::Err<Rich<'a, Token>>> + Clone {
-    let unary = unary_agg_expr(expr).map(AggExpr::Unary);
+    let unary = unary_agg_expr(expr.clone()).map(AggExpr::Unary);
     let standalone = standalone_agg_expr().map(AggExpr::Standalone);
-    choice((unary, standalone))
+    let sort_by = sort_by_expr(expr.clone()).map(AggExpr::SortBy);
+    choice((unary, standalone, sort_by))
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SortByExpr {
+    pub pairs: Vec<(Expr, bool)>,
+    pub expr: Expr,
+}
+
+fn sort_by_expr<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], SortByExpr, extra::Err<Rich<'a, Token>>> + Clone {
+    let pair = expr
+        .clone()
+        .then(select_ref! { Token::Literal(Literal::Bool(descending)) => *descending });
+    just(Token::SortBy)
+        .ignore_then(pair.repeated().collect())
+        .then(expr)
+        .map(|(pairs, expr)| SortByExpr { pairs, expr })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -431,6 +451,7 @@ pub enum Token {
     Reverse,
     Sort,
     Describe,
+    SortBy,
     AggOperator(AggOperator),
     Alias,
     Col,
@@ -486,6 +507,8 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let statement = choice((
             select, group_by, agg, filter, limit, reverse, sort, describe,
         ));
+
+        let sort_by = text::keyword("sort_by").to(Token::SortBy);
 
         let sum = text::keyword("sum").to(AggOperator::Sum);
         let count = text::keyword("count").to(AggOperator::Count);
@@ -549,6 +572,7 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
 
         let token = choice((
             statement,
+            sort_by,
             agg_op,
             expr_functor,
             group,
