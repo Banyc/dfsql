@@ -210,7 +210,7 @@ impl SqlHelper {
             ("count", color_expr_functor()),
             ("first", color_expr_functor()),
             ("last", color_expr_functor()),
-            ("sort_by", color_expr_functor()),
+            ("by", color_expr_functor()),
             ("alias", color_expr_functor()),
             ("col", color_expr_functor()),
             ("exclude", color_expr_functor()),

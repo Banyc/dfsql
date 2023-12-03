@@ -297,10 +297,10 @@ pub enum AggExpr {
 fn agg_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], AggExpr, extra::Err<Rich<'a, Token>>> + Clone {
+    let sort_by = sort_by_expr(expr.clone()).map(AggExpr::SortBy);
     let unary = unary_agg_expr(expr.clone()).map(AggExpr::Unary);
     let standalone = standalone_agg_expr().map(AggExpr::Standalone);
-    let sort_by = sort_by_expr(expr.clone()).map(AggExpr::SortBy);
-    choice((unary, standalone, sort_by))
+    choice((sort_by, unary, standalone))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -315,10 +315,11 @@ fn sort_by_expr<'a>(
     let pair = expr
         .clone()
         .then(select_ref! { Token::Literal(Literal::Bool(descending)) => *descending });
-    just(Token::SortBy)
-        .ignore_then(pair.repeated().collect())
-        .then(expr)
-        .map(|(pairs, expr)| SortByExpr { pairs, expr })
+    just(Token::Sort)
+        .ignore_then(expr)
+        .then_ignore(just(Token::By))
+        .then(pair.repeated().collect())
+        .map(|(expr, pairs)| SortByExpr { pairs, expr })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -451,7 +452,7 @@ pub enum Token {
     Reverse,
     Sort,
     Describe,
-    SortBy,
+    By,
     AggOperator(AggOperator),
     Alias,
     Col,
@@ -508,7 +509,7 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
             select, group_by, agg, filter, limit, reverse, sort, describe,
         ));
 
-        let sort_by = text::keyword("sort_by").to(Token::SortBy);
+        let by = text::keyword("by").to(Token::By);
 
         let sum = text::keyword("sum").to(AggOperator::Sum);
         let count = text::keyword("count").to(AggOperator::Count);
@@ -572,7 +573,7 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
 
         let token = choice((
             statement,
-            sort_by,
+            by,
             agg_op,
             expr_functor,
             group,
