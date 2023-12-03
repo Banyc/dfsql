@@ -21,6 +21,10 @@ fn apply_stat(df: LazyFrame, stat: &sql::Stat) -> LazyFrame {
             let condition = convert_expr(&filter.condition);
             df.filter(condition)
         }
+        sql::Stat::Limit(limit) => {
+            let rows = limit.rows.parse().unwrap();
+            df.limit(rows)
+        }
         sql::Stat::Reverse => df.reverse(),
     }
 }
@@ -34,13 +38,8 @@ fn convert_expr(expr: &sql::Expr) -> polars::lazy::dsl::Expr {
         }
         sql::Expr::Literal(literal) => match literal {
             sql::Literal::String(string) => lit(string.clone()),
-            sql::Literal::Number(number) => {
-                if number.contains('.') {
-                    lit(number.parse::<f64>().unwrap())
-                } else {
-                    lit(number.parse::<i64>().unwrap())
-                }
-            }
+            sql::Literal::Int(number) => lit(number.parse::<i64>().unwrap()),
+            sql::Literal::Float(number) => lit(number.parse::<f64>().unwrap()),
         },
         sql::Expr::Binary(binary) => {
             let left = convert_expr(&binary.left);

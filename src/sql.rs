@@ -32,6 +32,7 @@ pub enum Stat {
     Select(SelectStat),
     GroupAgg(GroupAggStat),
     Filter(FilterStat),
+    Limit(LimitStat),
     Reverse,
 }
 
@@ -39,8 +40,9 @@ fn parser<'a>() -> impl Parser<'a, &'a [Token], S, extra::Err<Rich<'a, Token>>> 
     let select = select_stat().map(Stat::Select);
     let group_agg = group_agg_stat().map(Stat::GroupAgg);
     let filter = filter_stat().map(Stat::Filter);
+    let limit = limit_stat().map(Stat::Limit);
     let reverse = just(Token::Reverse).to(Stat::Reverse);
-    let stat = choice((select, group_agg, filter, reverse));
+    let stat = choice((select, group_agg, filter, limit, reverse));
 
     stat.repeated().collect().map(|statements| S { statements })
 }
@@ -92,6 +94,18 @@ fn filter_stat<'a>() -> impl Parser<'a, &'a [Token], FilterStat, extra::Err<Rich
     just(Token::Filter)
         .ignore_then(expr())
         .map(|condition| FilterStat { condition })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LimitStat {
+    pub rows: String,
+}
+
+fn limit_stat<'a>() -> impl Parser<'a, &'a [Token], LimitStat, extra::Err<Rich<'a, Token>>> + Clone
+{
+    just(Token::Limit)
+        .ignore_then(select_ref! { Token::Literal(Literal::Int(rows)) => rows.clone() })
+        .map(|rows| LimitStat { rows })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -292,6 +306,7 @@ pub enum Token {
     Agg,
     AggOperator(AggOperator),
     Filter,
+    Limit,
     Reverse,
     Alias,
     Col,
@@ -314,7 +329,8 @@ pub enum Token {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     String(String),
-    Number(String),
+    Int(String),
+    Float(String),
 }
 
 fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>>> + Clone {
@@ -326,6 +342,7 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let count = text::keyword("count").to(AggOperator::Count);
         let agg_op = choice((sum, count)).map(Token::AggOperator);
         let filter = text::keyword("filter").to(Token::Filter);
+        let limit = text::keyword("limit").to(Token::Limit);
         let reverse = text::keyword("reverse").to(Token::Reverse);
         let alias = text::keyword("alias").to(Token::Alias);
         let col = text::keyword("col").to(Token::Col);
@@ -348,19 +365,26 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let bang = just('!').to(Token::Bang);
         let comma = just(',').to(Token::Comma);
         let ident = text::ident().map(ToString::to_string).map(Token::Variable);
-        let pos_number = text::digits(10)
-            .then(just('.').then(text::digits(10)).or_not())
+        let pos_float = text::digits(10)
+            .then(just('.').then(text::digits(10)))
             .to_slice()
             .map(ToString::to_string)
-            .map(Literal::Number)
+            .map(Literal::Float)
+            .map(Token::Literal);
+        let pos_int = text::digits(10)
+            .to_slice()
+            .map(ToString::to_string)
+            .map(Literal::Int)
             .map(Token::Literal);
         let string = string().map(Literal::String).map(Token::Literal);
+        let literal = choice((pos_float, pos_int, string));
         let token = choice((
             select,
             group_by,
             agg,
             agg_op,
             filter,
+            limit,
             reverse,
             alias,
             col,
@@ -377,8 +401,7 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
             bang,
             comma,
             ident,
-            pos_number,
-            string,
+            literal,
         ));
         token.padded().repeated().collect()
     })
@@ -481,7 +504,7 @@ mod tests {
                 condition: Expr::Binary(Box::new(BinaryExpr {
                     operator: BinaryOperator::Eq,
                     left: Expr::Col(String::from("foo")),
-                    right: Expr::Literal(Literal::Number(String::from("42"))),
+                    right: Expr::Literal(Literal::Int(String::from("42"))),
                 })),
             }
         );
@@ -498,7 +521,7 @@ mod tests {
             expr,
             Expr::Binary(Box::new(BinaryExpr {
                 operator: BinaryOperator::GtEq,
-                left: Expr::Literal(Literal::Number(String::from("42"))),
+                left: Expr::Literal(Literal::Int(String::from("42"))),
                 right: Expr::Unary(Box::new(UnaryExpr {
                     operator: UnaryOperator::Neg,
                     expr: Expr::Agg(Box::new(AggExpr {
@@ -521,7 +544,7 @@ mod tests {
             expr,
             Expr::Binary(Box::new(BinaryExpr {
                 operator: BinaryOperator::Add,
-                left: Expr::Literal(Literal::Number(String::from("42"))),
+                left: Expr::Literal(Literal::Int(String::from("42"))),
                 right: Expr::Unary(Box::new(UnaryExpr {
                     operator: UnaryOperator::Neg,
                     expr: Expr::Agg(Box::new(AggExpr {
@@ -544,10 +567,10 @@ mod tests {
             expr,
             Expr::Binary(Box::new(BinaryExpr {
                 operator: BinaryOperator::Add,
-                left: Expr::Literal(Literal::Number(String::from("42"))),
+                left: Expr::Literal(Literal::Int(String::from("42"))),
                 right: Expr::Binary(Box::new(BinaryExpr {
                     operator: BinaryOperator::Mul,
-                    left: Expr::Literal(Literal::Number(String::from("1"))),
+                    left: Expr::Literal(Literal::Int(String::from("1"))),
                     right: Expr::Unary(Box::new(UnaryExpr {
                         operator: UnaryOperator::Neg,
                         expr: Expr::Agg(Box::new(AggExpr {
@@ -606,7 +629,7 @@ mod tests {
             expr,
             Expr::Alias(Box::new(AliasExpr {
                 name: String::from("foo"),
-                expr: Expr::Literal(Literal::Number(String::from("42"))),
+                expr: Expr::Literal(Literal::Int(String::from("42"))),
             }))
         );
     }
@@ -647,8 +670,8 @@ mod tests {
                 Token::Div,
                 Token::Eq,
                 Token::Sub,
-                Token::Literal(Literal::Number(String::from("42"))),
-                Token::Literal(Literal::Number(String::from("0.1"))),
+                Token::Literal(Literal::Int(String::from("42"))),
+                Token::Literal(Literal::Float(String::from("0.1"))),
                 Token::Literal(Literal::String(String::from("hi"))),
             ]
         );
