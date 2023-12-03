@@ -118,8 +118,11 @@ pub mod handler {
             if trimmed_line == "exit" || trimmed_line == "quit" {
                 return Ok(HandleLineResult::Exit);
             }
-            if trimmed_line == "undo" {
+            if trimmed_line == "undo" || trimmed_line == "reset" {
                 self.history.pop();
+                if trimmed_line == "reset" {
+                    self.history.clear();
+                }
                 if self.history.is_empty() {
                     return Ok(HandleLineResult::Updated(self.original_df.clone()));
                 }
