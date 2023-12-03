@@ -286,7 +286,21 @@ fn unary_expr<'a>(
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct AggExpr {
+pub enum AggExpr {
+    Unary(UnaryAggExpr),
+    Standalone(StandaloneAggExpr),
+}
+
+fn agg_expr<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], AggExpr, extra::Err<Rich<'a, Token>>> + Clone {
+    let unary = unary_agg_expr(expr).map(AggExpr::Unary);
+    let standalone = standalone_agg_expr().map(AggExpr::Standalone);
+    choice((unary, standalone))
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnaryAggExpr {
     pub operator: AggOperator,
     pub expr: Expr,
 }
@@ -297,13 +311,31 @@ pub enum AggOperator {
     Count,
 }
 
-fn agg_expr<'a>(
+fn unary_agg_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
-) -> impl Parser<'a, &'a [Token], AggExpr, extra::Err<Rich<'a, Token>>> + Clone {
+) -> impl Parser<'a, &'a [Token], UnaryAggExpr, extra::Err<Rich<'a, Token>>> + Clone {
     let operator = select_ref! { Token::AggOperator(operator) => *operator };
     operator
         .then(expr)
-        .map(|(operator, expr)| AggExpr { operator, expr })
+        .map(|(operator, expr)| UnaryAggExpr { operator, expr })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StandaloneAggExpr {
+    pub operator: StandaloneAggOperator,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StandaloneAggOperator {
+    Count,
+}
+
+fn standalone_agg_expr<'a>(
+) -> impl Parser<'a, &'a [Token], StandaloneAggExpr, extra::Err<Rich<'a, Token>>> + Clone {
+    let count =
+        select_ref! { Token::AggOperator(AggOperator::Count) => StandaloneAggOperator::Count };
+    let operator = choice((count,));
+    operator.map(|operator| StandaloneAggExpr { operator })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -592,14 +624,14 @@ mod tests {
             GroupAggStat {
                 group_by: vec![String::from("foo"), String::from("bar")],
                 agg: vec![
-                    Expr::Agg(Box::new(AggExpr {
+                    Expr::Agg(Box::new(AggExpr::Unary(UnaryAggExpr {
                         operator: AggOperator::Sum,
                         expr: Expr::Col(String::from("foo")),
-                    })),
-                    Expr::Agg(Box::new(AggExpr {
+                    }))),
+                    Expr::Agg(Box::new(AggExpr::Unary(UnaryAggExpr {
                         operator: AggOperator::Count,
                         expr: Expr::Col(String::from("bar")),
-                    })),
+                    }))),
                 ],
             }
         );
@@ -638,10 +670,10 @@ mod tests {
                 left: Expr::Literal(Literal::Int(String::from("42"))),
                 right: Expr::Unary(Box::new(UnaryExpr {
                     operator: UnaryOperator::Neg,
-                    expr: Expr::Agg(Box::new(AggExpr {
+                    expr: Expr::Agg(Box::new(AggExpr::Unary(UnaryAggExpr {
                         operator: AggOperator::Sum,
                         expr: Expr::Col(String::from("foo")),
-                    })),
+                    }))),
                 })),
             }))
         );
@@ -661,10 +693,10 @@ mod tests {
                 left: Expr::Literal(Literal::Int(String::from("42"))),
                 right: Expr::Unary(Box::new(UnaryExpr {
                     operator: UnaryOperator::Neg,
-                    expr: Expr::Agg(Box::new(AggExpr {
+                    expr: Expr::Agg(Box::new(AggExpr::Unary(UnaryAggExpr {
                         operator: AggOperator::Sum,
                         expr: Expr::Col(String::from("foo")),
-                    })),
+                    }))),
                 })),
             }))
         );
@@ -687,10 +719,10 @@ mod tests {
                     left: Expr::Literal(Literal::Int(String::from("1"))),
                     right: Expr::Unary(Box::new(UnaryExpr {
                         operator: UnaryOperator::Neg,
-                        expr: Expr::Agg(Box::new(AggExpr {
+                        expr: Expr::Agg(Box::new(AggExpr::Unary(UnaryAggExpr {
                             operator: AggOperator::Sum,
                             expr: Expr::Col(String::from("foo")),
-                        })),
+                        }))),
                     })),
                 })),
             }))
@@ -708,10 +740,10 @@ mod tests {
             expr,
             Expr::Unary(Box::new(UnaryExpr {
                 operator: UnaryOperator::Neg,
-                expr: Expr::Agg(Box::new(AggExpr {
+                expr: Expr::Agg(Box::new(AggExpr::Unary(UnaryAggExpr {
                     operator: AggOperator::Sum,
                     expr: Expr::Col(String::from("foo")),
-                })),
+                }))),
             }))
         );
     }
@@ -725,10 +757,10 @@ mod tests {
         let expr = parser.parse(&tokens).unwrap();
         assert_eq!(
             expr,
-            Expr::Agg(Box::new(AggExpr {
+            Expr::Agg(Box::new(AggExpr::Unary(UnaryAggExpr {
                 operator: AggOperator::Sum,
                 expr: Expr::Col(String::from("foo")),
-            }))
+            }))),
         );
     }
 

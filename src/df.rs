@@ -67,13 +67,18 @@ fn convert_expr(expr: &sql::Expr) -> polars::lazy::dsl::Expr {
                 sql::UnaryOperator::Not => expr.not(),
             }
         }
-        sql::Expr::Agg(agg) => {
-            let expr = convert_expr(&agg.expr);
-            match agg.operator {
-                sql::AggOperator::Sum => expr.sum(),
-                sql::AggOperator::Count => expr.count(),
+        sql::Expr::Agg(agg) => match agg.as_ref() {
+            sql::AggExpr::Unary(unary) => {
+                let expr = convert_expr(&unary.expr);
+                match unary.operator {
+                    sql::AggOperator::Sum => expr.sum(),
+                    sql::AggOperator::Count => expr.count(),
+                }
             }
-        }
+            sql::AggExpr::Standalone(standalone) => match standalone.operator {
+                sql::StandaloneAggOperator::Count => count(),
+            },
+        },
         sql::Expr::Alias(alias) => {
             let expr = convert_expr(&alias.expr);
             expr.alias(&alias.name)
