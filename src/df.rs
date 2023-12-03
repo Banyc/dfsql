@@ -21,6 +21,7 @@ fn apply_stat(df: LazyFrame, stat: &sql::Stat) -> LazyFrame {
             let condition = convert_expr(&filter.condition);
             df.filter(condition)
         }
+        sql::Stat::Reverse => df.reverse(),
     }
 }
 

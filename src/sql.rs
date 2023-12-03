@@ -32,13 +32,15 @@ pub enum Stat {
     Select(SelectStat),
     GroupAgg(GroupAggStat),
     Filter(FilterStat),
+    Reverse,
 }
 
 fn parser<'a>() -> impl Parser<'a, &'a [Token], S, extra::Err<Rich<'a, Token>>> + Clone {
     let select = select_stat().map(Stat::Select);
     let group_agg = group_agg_stat().map(Stat::GroupAgg);
     let filter = filter_stat().map(Stat::Filter);
-    let stat = choice((select, group_agg, filter));
+    let reverse = just(Token::Reverse).to(Stat::Reverse);
+    let stat = choice((select, group_agg, filter, reverse));
 
     stat.repeated().collect().map(|statements| S { statements })
 }
@@ -290,6 +292,7 @@ pub enum Token {
     Agg,
     AggOperator(AggOperator),
     Filter,
+    Reverse,
     Alias,
     Col,
     Exclude,
@@ -323,6 +326,7 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let count = text::keyword("count").to(AggOperator::Count);
         let agg_op = choice((sum, count)).map(Token::AggOperator);
         let filter = text::keyword("filter").to(Token::Filter);
+        let reverse = text::keyword("reverse").to(Token::Reverse);
         let alias = text::keyword("alias").to(Token::Alias);
         let col = text::keyword("col").to(Token::Col);
         let exclude = text::keyword("exclude").to(Token::Exclude);
@@ -357,6 +361,7 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
             agg,
             agg_op,
             filter,
+            reverse,
             alias,
             col,
             exclude,

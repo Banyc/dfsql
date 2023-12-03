@@ -200,6 +200,7 @@ impl Highlighter for SqlHelper {
         let line = color_keyword(&line, "group");
         let line = color_keyword(&line, "agg");
         let line = color_keyword(&line, "filter");
+        let line = color_keyword(&line, "reverse");
         let line = color_expr(&line, "sum");
         let line = color_expr(&line, "count");
         let line = color_expr(&line, "alias");
