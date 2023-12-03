@@ -131,11 +131,12 @@ fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>>
         let agg = agg_expr(expr.clone()).map(Box::new).map(Expr::Agg);
         let alias = alias_expr(expr.clone()).map(Box::new).map(Expr::Alias);
         let unary = unary_expr(expr.clone()).map(Box::new).map(Expr::Unary);
-        let atom = choice((atom, agg, alias, unary));
+        let atom = choice((atom, agg, alias, unary)).boxed();
 
         let term = term_expr(atom);
         let sum = sum_expr(term);
-        cmp_expr(sum)
+        let cmp = cmp_expr(sum);
+        logic_expr(cmp)
     })
     .boxed()
 }
@@ -180,6 +181,8 @@ pub enum BinaryOperator {
     Lt,
     GtEq,
     Gt,
+    And,
+    Or,
 }
 
 fn term_expr<'a>(
@@ -213,6 +216,15 @@ fn cmp_expr<'a>(
         .then(just(Token::Eq))
         .to(BinaryOperator::GtEq);
     let operator = choice((eq, lt_eq, lt, gt_eq, gt));
+    binary_expr(operator, expr)
+}
+
+fn logic_expr<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
+    let and = just(Token::Ampersand).to(BinaryOperator::And);
+    let or = just(Token::Pipe).to(BinaryOperator::Or);
+    let operator = choice((and, or));
     binary_expr(operator, expr)
 }
 
@@ -321,6 +333,8 @@ pub enum Token {
     Div,
     Eq,
     Bang,
+    Ampersand,
+    Pipe,
     Comma,
     Variable(String),
     Literal(Literal),
@@ -331,6 +345,7 @@ pub enum Literal {
     String(String),
     Int(String),
     Float(String),
+    Bool(bool),
 }
 
 fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>>> + Clone {
@@ -363,21 +378,24 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let div = just('/').to(Token::Div);
         let eq = just('=').to(Token::Eq);
         let bang = just('!').to(Token::Bang);
+        let ampersand = just('&').to(Token::Ampersand);
+        let pipe = just('|').to(Token::Pipe);
         let comma = just(',').to(Token::Comma);
-        let ident = text::ident().map(ToString::to_string).map(Token::Variable);
         let pos_float = text::digits(10)
             .then(just('.').then(text::digits(10)))
             .to_slice()
             .map(ToString::to_string)
-            .map(Literal::Float)
-            .map(Token::Literal);
+            .map(Literal::Float);
         let pos_int = text::digits(10)
             .to_slice()
             .map(ToString::to_string)
-            .map(Literal::Int)
-            .map(Token::Literal);
-        let string = string().map(Literal::String).map(Token::Literal);
-        let literal = choice((pos_float, pos_int, string));
+            .map(Literal::Int);
+        let string = string().map(Literal::String);
+        let bool_true = text::keyword("true").to(Literal::Bool(true));
+        let bool_false = text::keyword("false").to(Literal::Bool(false));
+        let bool = choice((bool_true, bool_false));
+        let literal = choice((pos_float, pos_int, bool, string)).map(Token::Literal);
+        let ident = text::ident().map(ToString::to_string).map(Token::Variable);
         let token = choice((
             select,
             group_by,
@@ -399,9 +417,11 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
             div,
             eq,
             bang,
+            ampersand,
+            pipe,
             comma,
-            ident,
             literal,
+            ident,
         ));
         token.padded().repeated().collect()
     })
