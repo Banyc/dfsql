@@ -258,7 +258,10 @@ impl TerminalKeywordHighlighter {
     pub fn new(keyword_color_pairs: impl Iterator<Item = KeywordColor>) -> Self {
         let rules = keyword_color_pairs
             .map(|pair| {
-                let pattern = format!("(?<=\\s|^)({keyword})(?=\\s|$)", keyword = pair.keyword);
+                let pattern = format!(
+                    "(?<=\\s|^|\\()({keyword})(?=\\s|$|\\))",
+                    keyword = pair.keyword
+                );
                 let regex = Regex::new(&pattern).unwrap();
                 (pair, regex)
             })
