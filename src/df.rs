@@ -27,6 +27,10 @@ fn apply_stat(df: LazyFrame, stat: &sql::Stat) -> LazyFrame {
 fn convert_expr(expr: &sql::Expr) -> polars::lazy::dsl::Expr {
     match expr {
         sql::Expr::Col(name) => col(name),
+        sql::Expr::Exclude(exclude) => {
+            let any = col("*");
+            any.exclude(&exclude.columns)
+        }
         sql::Expr::Literal(literal) => match literal {
             sql::Literal::String(string) => lit(string.clone()),
             sql::Literal::Number(number) => {

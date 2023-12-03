@@ -95,6 +95,7 @@ fn filter_stat<'a>() -> impl Parser<'a, &'a [Token], FilterStat, extra::Err<Rich
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Col(String),
+    Exclude(ExcludeExpr),
     Literal(Literal),
     Binary(Box<BinaryExpr>),
     Unary(Box<UnaryExpr>),
@@ -108,8 +109,9 @@ fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>>
             .clone()
             .nested_in(select_ref! { Token::Parens(parens) => parens.as_slice() });
         let col = col_expr().map(Expr::Col);
+        let exclude = exclude_expr().map(Expr::Exclude);
         let literal = select_ref! { Token::Literal(lit) => lit.clone() }.map(Expr::Literal);
-        let atom = choice((col, literal, parens));
+        let atom = choice((col, exclude, literal, parens));
         let agg = agg_expr(expr.clone()).map(Box::new).map(Expr::Agg);
         let alias = alias_expr(expr.clone()).map(Box::new).map(Expr::Alias);
         let unary = unary_expr(expr.clone()).map(Box::new).map(Expr::Unary);
@@ -130,6 +132,18 @@ fn col_expr<'a>() -> impl Parser<'a, &'a [Token], String, extra::Err<Rich<'a, To
     let any = just(Token::Mul).to(String::from("*"));
     let name = choice((string_token(), variable_token(), any));
     just(Token::Col).ignore_then(name)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExcludeExpr {
+    pub columns: Vec<String>,
+}
+
+fn exclude_expr<'a>(
+) -> impl Parser<'a, &'a [Token], ExcludeExpr, extra::Err<Rich<'a, Token>>> + Clone {
+    just(Token::Exclude)
+        .ignore_then(lax_col_name().repeated().collect())
+        .map(|columns| ExcludeExpr { columns })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -278,6 +292,7 @@ pub enum Token {
     Filter,
     Alias,
     Col,
+    Exclude,
     Parens(Vec<Token>),
     Brackets(Vec<Token>),
     LeftAngle,
@@ -310,6 +325,7 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let filter = text::keyword("filter").to(Token::Filter);
         let alias = text::keyword("alias").to(Token::Alias);
         let col = text::keyword("col").to(Token::Col);
+        let exclude = text::keyword("exclude").to(Token::Exclude);
         let parens = tokens
             .clone()
             .delimited_by(just('(').padded(), just(')').padded())
@@ -343,6 +359,7 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
             filter,
             alias,
             col,
+            exclude,
             brackets,
             parens,
             left_angle,
@@ -399,6 +416,26 @@ fn string<'a>() -> impl Parser<'a, &'a str, String, extra::Err<Rich<'a, char>>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_select_expr() {
+        let src = r#"select col a exclude b col c"#;
+        let lexer = lexer();
+        let tokens = lexer.parse(src).unwrap();
+        let parser = select_stat();
+        let expr = parser.parse(&tokens).unwrap();
+        assert_eq!(
+            expr,
+            SelectStat {
+                columns: vec![
+                    Expr::Col(String::from("a")),
+                    Expr::Exclude(ExcludeExpr {
+                        columns: vec![String::from("b"), String::from("c")],
+                    }),
+                ]
+            }
+        );
+    }
 
     #[test]
     fn test_group_agg_stat() {
