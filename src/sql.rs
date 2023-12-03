@@ -354,10 +354,10 @@ pub enum Token {
     Select,
     GroupBy,
     Agg,
-    AggOperator(AggOperator),
     Filter,
     Limit,
     Reverse,
+    AggOperator(AggOperator),
     Alias,
     Col,
     Exclude,
@@ -394,12 +394,15 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let select = text::keyword("select").to(Token::Select);
         let group_by = text::keyword("group").to(Token::GroupBy);
         let agg = text::keyword("agg").to(Token::Agg);
-        let sum = text::keyword("sum").to(AggOperator::Sum);
-        let count = text::keyword("count").to(AggOperator::Count);
-        let agg_op = choice((sum, count)).map(Token::AggOperator);
         let filter = text::keyword("filter").to(Token::Filter);
         let limit = text::keyword("limit").to(Token::Limit);
         let reverse = text::keyword("reverse").to(Token::Reverse);
+        let statement = choice((select, group_by, agg, filter, limit, reverse));
+
+        let sum = text::keyword("sum").to(AggOperator::Sum);
+        let count = text::keyword("count").to(AggOperator::Count);
+        let agg_op = choice((sum, count)).map(Token::AggOperator);
+
         let alias = text::keyword("alias").to(Token::Alias);
         let col = text::keyword("col").to(Token::Col);
         let exclude = text::keyword("exclude").to(Token::Exclude);
@@ -407,6 +410,8 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let then = text::keyword("then").to(Token::Then);
         let otherwise = text::keyword("else").to(Token::Else);
         let conditional = choice((when, then, otherwise));
+        let expr_functor = choice((alias, col, exclude, conditional));
+
         let parens = tokens
             .clone()
             .delimited_by(just('(').padded(), just(')').padded())
@@ -415,6 +420,8 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
             .clone()
             .delimited_by(just('[').padded(), just(']').padded())
             .map(Token::Brackets);
+        let group = choice((parens, brackets));
+
         let left_angle = just('<').to(Token::LeftAngle);
         let right_angle = just('>').to(Token::RightAngle);
         let add = just('+').to(Token::Add);
@@ -426,6 +433,7 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let ampersand = just('&').to(Token::Ampersand);
         let pipe = just('|').to(Token::Pipe);
         let comma = just(',').to(Token::Comma);
+
         let pos_float = text::digits(10)
             .then(just('.').then(text::digits(10)))
             .to_slice()
@@ -440,21 +448,14 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let bool_false = text::keyword("false").to(Literal::Bool(false));
         let bool = choice((bool_true, bool_false));
         let literal = choice((pos_float, pos_int, bool, string)).map(Token::Literal);
+
         let ident = text::ident().map(ToString::to_string).map(Token::Variable);
+
         let token = choice((
-            select,
-            group_by,
-            agg,
+            statement,
             agg_op,
-            filter,
-            limit,
-            reverse,
-            alias,
-            col,
-            exclude,
-            conditional,
-            brackets,
-            parens,
+            expr_functor,
+            group,
             left_angle,
             right_angle,
             add,
