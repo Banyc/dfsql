@@ -207,9 +207,13 @@ impl Highlighter for SqlHelper {
         let line = color_expr(&line, "alias");
         let line = color_expr(&line, "col");
         let line = color_expr(&line, "exclude");
+        let line = color_expr(&line, "cast");
         let line = color_control_flow(&line, "if");
         let line = color_control_flow(&line, "then");
         let line = color_control_flow(&line, "else");
+        let line = color_type(&line, "str");
+        let line = color_type(&line, "int");
+        let line = color_type(&line, "float");
         line.into()
     }
 
@@ -228,6 +232,14 @@ fn color_keyword(src: &str, keyword: &str) -> String {
 
 fn color_control_flow(src: &str, keyword: &str) -> String {
     src.replace(keyword, &color_string_magenta(keyword))
+}
+
+fn color_type(src: &str, keyword: &str) -> String {
+    src.replace(keyword, &color_string_green(keyword))
+}
+
+fn color_string_green(string: &str) -> String {
+    format!("\x1b[1;32m{string}\x1b[0m")
 }
 
 fn color_string_yellow(string: &str) -> String {

@@ -118,6 +118,7 @@ pub enum Expr {
     Agg(Box<AggExpr>),
     Alias(Box<AliasExpr>),
     Conditional(Box<ConditionalExpr>),
+    Cast(Box<CastExpr>),
 }
 
 fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -136,7 +137,8 @@ fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>>
         let conditional = conditional_expr(expr.clone())
             .map(Box::new)
             .map(Expr::Conditional);
-        let atom = choice((atom, agg, alias, unary, conditional)).boxed();
+        let cast = cast_expr(expr.clone()).map(Box::new).map(Expr::Cast);
+        let atom = choice((atom, agg, alias, unary, conditional, cast)).boxed();
 
         let term = term_expr(atom);
         let sum = sum_expr(term);
@@ -341,6 +343,21 @@ fn conditional_expr<'a>(
         })
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct CastExpr {
+    pub expr: Expr,
+    pub ty: Type,
+}
+
+fn cast_expr<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], CastExpr, extra::Err<Rich<'a, Token>>> + Clone {
+    just(Token::Cast)
+        .ignore_then(select_ref! { Token::Type(ty) => *ty })
+        .then(expr)
+        .map(|(ty, expr)| CastExpr { expr, ty })
+}
+
 fn string_token<'a>() -> impl Parser<'a, &'a [Token], String, extra::Err<Rich<'a, Token>>> + Clone {
     select_ref! { Token::Literal(Literal::String(name)) => name.clone() }
 }
@@ -365,6 +382,8 @@ pub enum Token {
     If,
     Then,
     Else,
+    Type(Type),
+    Cast,
     Parens(Vec<Token>),
     Brackets(Vec<Token>),
     LeftAngle,
@@ -390,6 +409,13 @@ pub enum Literal {
     Bool(bool),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Type {
+    Str,
+    Int,
+    Float,
+}
+
 fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>>> + Clone {
     recursive(|tokens| {
         let select = text::keyword("select").to(Token::Select);
@@ -411,7 +437,12 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let then = text::keyword("then").to(Token::Then);
         let otherwise = text::keyword("else").to(Token::Else);
         let conditional = choice((when, then, otherwise));
-        let expr_functor = choice((alias, col, exclude, conditional));
+        let str = text::keyword("str").to(Type::Str);
+        let int = text::keyword("int").to(Type::Int);
+        let float = text::keyword("float").to(Type::Float);
+        let ty = choice((str, int, float)).map(Token::Type);
+        let cast = text::keyword("cast").to(Token::Cast);
+        let expr_functor = choice((alias, col, exclude, conditional, ty, cast));
 
         let parens = tokens
             .clone()

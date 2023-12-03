@@ -99,5 +99,14 @@ fn convert_expr(expr: &sql::Expr) -> polars::lazy::dsl::Expr {
                 Case::ChainedThen(case) => case.otherwise(otherwise),
             }
         }
+        sql::Expr::Cast(cast) => {
+            let ty = match cast.ty {
+                sql::Type::Str => DataType::Utf8,
+                sql::Type::Int => DataType::Int64,
+                sql::Type::Float => DataType::Float64,
+            };
+            let expr = convert_expr(&cast.expr);
+            expr.cast(ty)
+        }
     }
 }
