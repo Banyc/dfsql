@@ -10,13 +10,14 @@ use polars::{
     io::{csv::CsvWriter, SerWriter},
     lazy::frame::{LazyCsvReader, LazyFileListReader, LazyFrame},
 };
+use rustyline::{error::ReadlineError, DefaultEditor};
 
 #[derive(Debug, Parser)]
 pub struct Cli {
     #[clap(short, long)]
     input: PathBuf,
     #[clap(short, long)]
-    output: PathBuf,
+    output: Option<PathBuf>,
     #[clap(short, long)]
     sql_output: Option<PathBuf>,
     #[clap(short, long, default_value_t = false)]
@@ -28,7 +29,9 @@ impl Cli {
         let write_repl_output = |df: LazyFrame, handler: &LineHandler| -> anyhow::Result<()> {
             let df = df.collect()?;
             println!("{df}");
-            write_df_output(df.clone(), &self.output)?;
+            if let Some(output) = &self.output {
+                write_df_output(df.clone(), output)?;
+            }
             if let Some(output) = &self.sql_output {
                 write_sql_output(handler.history().iter(), output)?;
             }
@@ -39,9 +42,19 @@ impl Cli {
         if self.eager {
             write_repl_output(df.clone(), &handler)?;
         }
-        let lines = std::io::stdin().lines();
-        for line in lines {
-            let line = line?;
+        let mut rl = DefaultEditor::new()?;
+        loop {
+            let line = rl.readline("> ");
+            let line = match line {
+                Ok(line) => line,
+                Err(ReadlineError::Eof) | Err(ReadlineError::Interrupted) => {
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    break;
+                }
+            };
             df = match handler.handle_line(df.clone(), line) {
                 HandleLineResult::Exit => break,
                 HandleLineResult::Updated(new) => new,
