@@ -55,6 +55,7 @@ impl Cli {
                     break;
                 }
             };
+            let _ = rl.add_history_entry(&line);
             df = match handler.handle_line(df.clone(), line) {
                 HandleLineResult::Exit => break,
                 HandleLineResult::Updated(new) => new,
