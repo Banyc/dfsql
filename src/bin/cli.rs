@@ -6,6 +6,7 @@ use std::{
 use clap::Parser;
 use handler::{HandleLineResult, LineHandler};
 use polars::{
+    frame::DataFrame,
     io::{csv::CsvWriter, SerWriter},
     lazy::frame::{LazyCsvReader, LazyFileListReader, LazyFrame},
 };
@@ -24,11 +25,20 @@ pub struct Cli {
 
 impl Cli {
     pub fn run(self) -> anyhow::Result<()> {
-        let mut df = LazyCsvReader::new(self.input).has_header(true).finish()?;
-        if self.eager {
+        let write_repl_output = |df: LazyFrame, handler: &LineHandler| -> anyhow::Result<()> {
+            let df = df.collect()?;
+            println!("{df}");
             write_df_output(df.clone(), &self.output)?;
-        }
+            if let Some(output) = &self.sql_output {
+                write_sql_output(handler.history().iter(), output)?;
+            }
+            Ok(())
+        };
+        let mut df = LazyCsvReader::new(self.input).has_header(true).finish()?;
         let mut handler = LineHandler::new(df.clone());
+        if self.eager {
+            write_repl_output(df.clone(), &handler)?;
+        }
         let lines = std::io::stdin().lines();
         for line in lines {
             let line = line?;
@@ -38,15 +48,14 @@ impl Cli {
                 HandleLineResult::Continue => continue,
             };
             if self.eager {
-                if let Err(e) = write_df_output(df.clone(), &self.output) {
+                if let Err(e) = write_repl_output(df.clone(), &handler) {
                     handler.pop_history();
                     eprintln!("{e}");
-                };
+                }
             }
         }
-        write_df_output(df, &self.output)?;
-        if let Some(output) = &self.sql_output {
-            write_sql_output(handler.history().iter(), output)?;
+        if !self.eager {
+            write_repl_output(df, &handler)?;
         }
         Ok(())
     }
@@ -113,13 +122,12 @@ pub mod handler {
     }
 }
 
-fn write_df_output(df: LazyFrame, path: impl AsRef<Path>) -> anyhow::Result<()> {
+fn write_df_output(mut df: DataFrame, path: impl AsRef<Path>) -> anyhow::Result<()> {
     let _ = std::fs::remove_file(&path);
     let output = std::fs::File::options()
         .write(true)
         .create(true)
         .open(path)?;
-    let mut df = df.collect()?;
     CsvWriter::new(output).finish(&mut df)?;
     Ok(())
 }
