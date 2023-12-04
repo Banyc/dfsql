@@ -209,6 +209,8 @@ impl SqlHelper {
             ("abs", color_expr_functor()),
             ("sum", color_expr_functor()),
             ("count", color_expr_functor()),
+            ("col_sort", color_expr_functor()),
+            ("col_reverse", color_expr_functor()),
             ("mean", color_expr_functor()),
             ("median", color_expr_functor()),
             ("first", color_expr_functor()),

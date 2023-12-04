@@ -346,9 +346,6 @@ fn unary_agg_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], UnaryAggExpr, extra::Err<Rich<'a, Token>>> + Clone {
     let operator = select_ref! { Token::AggOperator(operator) => *operator };
-    let sort = just(Token::Sort).to(AggOperator::Sort);
-    let reverse = just(Token::Reverse).to(AggOperator::Reverse);
-    let operator = choice((operator, sort, reverse));
     operator
         .then(expr)
         .map(|(operator, expr)| UnaryAggExpr { operator, expr })
@@ -518,11 +515,14 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
 
         let sum = text::keyword("sum").to(AggOperator::Sum);
         let count = text::keyword("count").to(AggOperator::Count);
+        let sort = text::keyword("col_sort").to(AggOperator::Sort);
+        let reverse = text::keyword("col_reverse").to(AggOperator::Sort);
         let first = text::keyword("first").to(AggOperator::First);
         let last = text::keyword("last").to(AggOperator::Last);
         let mean = text::keyword("mean").to(AggOperator::Mean);
         let median = text::keyword("median").to(AggOperator::Median);
-        let agg_op = choice((sum, count, first, last, mean, median)).map(Token::AggOperator);
+        let agg_op =
+            choice((sum, count, sort, reverse, first, last, mean, median)).map(Token::AggOperator);
 
         let alias = text::keyword("alias").to(Token::Alias);
         let col = text::keyword("col").to(Token::Col);
