@@ -48,29 +48,27 @@ fn apply_stat(
             let df = df.describe(None).unwrap();
             df.lazy()
         }
-        sql::Stat::Join(join) => {
-            match join {
-                sql::JoinStat::SingleCol(join) => {
-                    let other = others
-                        .get(&join.other)
-                        .ok_or_else(|| ApplyStatError::DfNotExists(join.other.to_string()))?
-                        .clone();
-                    // let left_on: Vec<_> = join.left_on.iter().map(convert_expr).collect();
-                    // let right_on: Vec<_> = join.right_on.iter().map(convert_expr).collect();
-                    let left_on = convert_expr(&join.left_on);
-                    let right_on = match &join.right_on {
-                        Some(right_on) => convert_expr(right_on),
-                        None => left_on.clone(),
-                    };
-                    match join.ty {
-                        sql::SingleColJoinType::Left => df.left_join(other, left_on, right_on),
-                        sql::SingleColJoinType::Right => other.left_join(df, left_on, right_on),
-                        sql::SingleColJoinType::Inner => df.inner_join(other, left_on, right_on),
-                        sql::SingleColJoinType::Outer => df.outer_join(other, left_on, right_on),
-                    }
+        sql::Stat::Join(join) => match join {
+            sql::JoinStat::SingleCol(join) => {
+                let other = others
+                    .get(&join.other)
+                    .ok_or_else(|| ApplyStatError::DfNotExists(join.other.to_string()))?
+                    .clone();
+                // let left_on: Vec<_> = join.left_on.iter().map(convert_expr).collect();
+                // let right_on: Vec<_> = join.right_on.iter().map(convert_expr).collect();
+                let left_on = convert_expr(&join.left_on);
+                let right_on = match &join.right_on {
+                    Some(right_on) => convert_expr(right_on),
+                    None => left_on.clone(),
+                };
+                match join.ty {
+                    sql::SingleColJoinType::Left => df.left_join(other, left_on, right_on),
+                    sql::SingleColJoinType::Right => other.left_join(df, left_on, right_on),
+                    sql::SingleColJoinType::Inner => df.inner_join(other, left_on, right_on),
+                    sql::SingleColJoinType::Outer => df.outer_join(other, left_on, right_on),
                 }
             }
-        }
+        },
     })
 }
 
