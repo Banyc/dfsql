@@ -206,20 +206,20 @@ impl SqlHelper {
             ("reverse", color_keyword()),
             ("sort", color_keyword()),
             ("describe", color_keyword()),
-            ("abs", color_expr_functor()),
-            ("sum", color_expr_functor()),
-            ("count", color_expr_functor()),
-            ("col_sort", color_expr_functor()),
-            ("col_reverse", color_expr_functor()),
-            ("mean", color_expr_functor()),
-            ("median", color_expr_functor()),
-            ("first", color_expr_functor()),
-            ("last", color_expr_functor()),
-            ("by", color_expr_functor()),
-            ("alias", color_expr_functor()),
-            ("col", color_expr_functor()),
-            ("exclude", color_expr_functor()),
-            ("cast", color_expr_functor()),
+            ("abs", color_functor()),
+            ("sum", color_functor()),
+            ("count", color_functor()),
+            ("col_sort", color_functor()),
+            ("col_reverse", color_functor()),
+            ("mean", color_functor()),
+            ("median", color_functor()),
+            ("first", color_functor()),
+            ("last", color_functor()),
+            ("by", color_functor()),
+            ("alias", color_functor()),
+            ("col", color_functor()),
+            ("exclude", color_functor()),
+            ("cast", color_functor()),
             ("if", color_control_flow()),
             ("then", color_control_flow()),
             ("else", color_control_flow()),
@@ -250,19 +250,19 @@ impl Highlighter for SqlHelper {
     }
 }
 
-fn color_expr_functor() -> TerminalColor {
+const fn color_functor() -> TerminalColor {
     TerminalColor::Yellow
 }
 
-fn color_keyword() -> TerminalColor {
+const fn color_keyword() -> TerminalColor {
     TerminalColor::Blue
 }
 
-fn color_control_flow() -> TerminalColor {
+const fn color_control_flow() -> TerminalColor {
     TerminalColor::Magenta
 }
 
-fn color_type() -> TerminalColor {
+const fn color_type() -> TerminalColor {
     TerminalColor::Green
 }
 
