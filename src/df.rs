@@ -76,6 +76,7 @@ fn convert_expr(expr: &sql::Expr) -> polars::lazy::dsl::Expr {
             match unary.operator {
                 sql::UnaryOperator::Neg => expr.clone() - expr.clone() - expr,
                 sql::UnaryOperator::Not => expr.not(),
+                sql::UnaryOperator::Abs => expr.abs(),
             }
         }
         sql::Expr::Agg(agg) => match agg.as_ref() {
@@ -88,6 +89,8 @@ fn convert_expr(expr: &sql::Expr) -> polars::lazy::dsl::Expr {
                     sql::AggOperator::Last => expr.last(),
                     sql::AggOperator::Sort => expr.sort(false),
                     sql::AggOperator::Reverse => expr.reverse(),
+                    sql::AggOperator::Mean => expr.mean(),
+                    sql::AggOperator::Median => expr.median(),
                 }
             }
             sql::AggExpr::Standalone(standalone) => match standalone.operator {

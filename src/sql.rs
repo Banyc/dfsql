@@ -84,7 +84,7 @@ fn group_agg_stat<'a>(
 
 fn column_names<'a>(
 ) -> impl Parser<'a, &'a [Token], Vec<String>, extra::Err<Rich<'a, Token>>> + Clone {
-    let column = lax_col_name();
+    let column = choice((lax_col_name(), string_token()));
     column.repeated().collect()
 }
 
@@ -274,6 +274,7 @@ pub struct UnaryExpr {
 pub enum UnaryOperator {
     Neg,
     Not,
+    Abs,
 }
 
 fn unary_expr<'a>(
@@ -281,8 +282,9 @@ fn unary_expr<'a>(
 ) -> impl Parser<'a, &'a [Token], UnaryExpr, extra::Err<Rich<'a, Token>>> + Clone {
     let sub = just(Token::Sub).to(UnaryOperator::Neg);
     let not = just(Token::Bang).to(UnaryOperator::Not);
+    let abs = just(Token::Abs).to(UnaryOperator::Abs);
 
-    choice((sub, not))
+    choice((sub, not, abs))
         .then(expr)
         .map(|(operator, expr)| UnaryExpr { operator, expr })
 }
@@ -336,6 +338,8 @@ pub enum AggOperator {
     Last,
     Sort,
     Reverse,
+    Mean,
+    Median,
 }
 
 fn unary_agg_expr<'a>(
@@ -378,7 +382,7 @@ fn alias_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], AliasExpr, extra::Err<Rich<'a, Token>>> + Clone {
     let alias = just(Token::Alias);
-    let name = lax_col_name();
+    let name = choice((lax_col_name(), string_token()));
     alias
         .ignore_then(name.then(expr))
         .map(|(name, expr)| AliasExpr { name, expr })
@@ -475,6 +479,7 @@ pub enum Token {
     Ampersand,
     Pipe,
     Comma,
+    Abs,
     Variable(String),
     Literal(Literal),
 }
@@ -515,7 +520,9 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let count = text::keyword("count").to(AggOperator::Count);
         let first = text::keyword("first").to(AggOperator::First);
         let last = text::keyword("last").to(AggOperator::Last);
-        let agg_op = choice((sum, count, first, last)).map(Token::AggOperator);
+        let mean = text::keyword("mean").to(AggOperator::Mean);
+        let median = text::keyword("median").to(AggOperator::Median);
+        let agg_op = choice((sum, count, first, last, mean, median)).map(Token::AggOperator);
 
         let alias = text::keyword("alias").to(Token::Alias);
         let col = text::keyword("col").to(Token::Col);
@@ -552,6 +559,7 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let ampersand = just('&').to(Token::Ampersand);
         let pipe = just('|').to(Token::Pipe);
         let comma = just(',').to(Token::Comma);
+        let abs = just("abs").to(Token::Abs);
 
         let pos_float = text::digits(10)
             .then(just('.').then(text::digits(10)))
@@ -588,6 +596,7 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
             ampersand,
             pipe,
             comma,
+            abs,
             literal,
             ident,
         ));
@@ -655,7 +664,6 @@ mod tests {
 
     #[test]
     fn test_group_agg_stat() {
-        // let src = r#"group [col "foo" "bar"] agg sum col "foo" count col "bar""#;
         let src = r#"group col "foo" "bar" agg sum col "foo" count col "bar""#;
         let lexer = lexer();
         let tokens = lexer.parse(src).unwrap();
