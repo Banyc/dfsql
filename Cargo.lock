@@ -396,6 +396,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dfsql"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chumsky",
+ "clap",
+ "fancy-regex",
+ "polars",
+ "rustyline",
+ "thiserror",
+]
+
+[[package]]
 name = "dyn-clone"
 version = "1.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1360,19 +1373,6 @@ dependencies = [
  "autocfg",
  "static_assertions",
  "version_check",
-]
-
-[[package]]
-name = "sql-repl"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chumsky",
- "clap",
- "fancy-regex",
- "polars",
- "rustyline",
- "thiserror",
 ]
 
 [[package]]

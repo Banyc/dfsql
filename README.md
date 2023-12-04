@@ -1,4 +1,4 @@
-# `sql-repl`
+# `dfsql`
 
 ![](img/terminal.png)
 

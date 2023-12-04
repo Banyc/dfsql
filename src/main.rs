@@ -110,11 +110,11 @@ impl Cli {
 pub mod handler {
     use std::collections::HashMap;
 
-    use polars::{lazy::frame::LazyFrame, prelude::SchemaRef};
-    use sql_repl::{
+    use dfsql::{
         df::{apply, ApplyStatError},
         sql,
     };
+    use polars::{lazy::frame::LazyFrame, prelude::SchemaRef};
 
     pub struct LineHandler {
         history: Vec<String>,
