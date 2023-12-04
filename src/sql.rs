@@ -36,6 +36,7 @@ pub enum Stat {
     Reverse,
     Sort(SortStat),
     Describe,
+    Join(JoinStat),
 }
 
 fn parser<'a>() -> impl Parser<'a, &'a [Token], S, extra::Err<Rich<'a, Token>>> + Clone {
@@ -46,7 +47,10 @@ fn parser<'a>() -> impl Parser<'a, &'a [Token], S, extra::Err<Rich<'a, Token>>> 
     let reverse = just(Token::Reverse).to(Stat::Reverse);
     let sort = sort_stat().map(Stat::Sort);
     let describe = just(Token::Describe).to(Stat::Describe);
-    let stat = choice((select, group_agg, filter, limit, reverse, sort, describe));
+    let join = join_stat().map(Stat::Join);
+    let stat = choice((
+        select, group_agg, filter, limit, reverse, sort, describe, join,
+    ));
 
     stat.repeated().collect().map(|statements| S { statements })
 }
@@ -121,6 +125,54 @@ fn sort_stat<'a>() -> impl Parser<'a, &'a [Token], SortStat, extra::Err<Rich<'a,
     just(Token::Sort)
         .ignore_then(lax_col_name())
         .map(|column| SortStat { column })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum JoinStat {
+    SingleCol(SingleColJoinStat),
+}
+
+fn join_stat<'a>() -> impl Parser<'a, &'a [Token], JoinStat, extra::Err<Rich<'a, Token>>> + Clone {
+    let single_col = single_col_join_stat().map(JoinStat::SingleCol);
+    choice((single_col,))
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SingleColJoinStat {
+    pub other: String,
+    pub ty: SingleColJoinType,
+    // pub left_on: Vec<Expr>,
+    // pub right_on: Vec<Expr>,
+    pub left_on: Expr,
+    pub right_on: Option<Expr>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SingleColJoinType {
+    Left,
+    Right,
+    Inner,
+    Outer,
+}
+
+fn single_col_join_stat<'a>(
+) -> impl Parser<'a, &'a [Token], SingleColJoinStat, extra::Err<Rich<'a, Token>>> + Clone {
+    let left = just(Token::Left).to(SingleColJoinType::Left);
+    let right = just(Token::Right).to(SingleColJoinType::Right);
+    let inner = just(Token::Inner).to(SingleColJoinType::Inner);
+    let outer = just(Token::Outer).to(SingleColJoinType::Outer);
+    let ty = choice((left, right, inner, outer));
+    // let on = just(Token::On).ignore_then(expr().repeated().collect());
+    let on = just(Token::On).ignore_then(expr()).then(expr().or_not());
+    ty.then_ignore(just(Token::Join))
+        .then(variable_token())
+        .then(on.clone())
+        .map(|((ty, other), (left_on, right_on))| SingleColJoinStat {
+            other,
+            ty,
+            left_on,
+            right_on,
+        })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -453,6 +505,12 @@ pub enum Token {
     Reverse,
     Sort,
     Describe,
+    Join,
+    On,
+    Left,
+    Right,
+    Inner,
+    Outer,
     By,
     AggOperator(AggOperator),
     Alias,
@@ -507,8 +565,15 @@ fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>
         let reverse = text::keyword("reverse").to(Token::Reverse);
         let sort = text::keyword("sort").to(Token::Sort);
         let describe = text::keyword("describe").to(Token::Describe);
+        let join = text::keyword("join").to(Token::Join);
+        let on = text::keyword("on").to(Token::On);
+        let outer = text::keyword("outer").to(Token::Outer);
+        let inner = text::keyword("inner").to(Token::Inner);
+        let left = text::keyword("left").to(Token::Left);
+        let right = text::keyword("right").to(Token::Right);
+        let join_type = choice((outer, inner, left, right));
         let statement = choice((
-            select, group_by, agg, filter, limit, reverse, sort, describe,
+            select, group_by, agg, filter, limit, reverse, sort, describe, join, on, join_type,
         ));
 
         let by = text::keyword("by").to(Token::By);

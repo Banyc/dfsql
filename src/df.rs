@@ -1,13 +1,28 @@
+use std::collections::HashMap;
+
 use polars::prelude::*;
+use thiserror::Error;
 
 use crate::sql;
 
-pub fn apply(df: LazyFrame, s: &sql::S) -> LazyFrame {
-    s.statements.iter().fold(df, apply_stat)
+pub fn apply(
+    df: LazyFrame,
+    s: &sql::S,
+    others: &HashMap<String, LazyFrame>,
+) -> Result<LazyFrame, ApplyStatError> {
+    let mut df = df;
+    for stat in &s.statements {
+        df = apply_stat(df, stat, others)?;
+    }
+    Ok(df)
 }
 
-fn apply_stat(df: LazyFrame, stat: &sql::Stat) -> LazyFrame {
-    match stat {
+fn apply_stat(
+    df: LazyFrame,
+    stat: &sql::Stat,
+    others: &HashMap<String, LazyFrame>,
+) -> Result<LazyFrame, ApplyStatError> {
+    Ok(match stat {
         sql::Stat::Select(select) => {
             let columns: Vec<_> = select.columns.iter().map(convert_expr).collect();
             df.select(columns)
@@ -29,15 +44,42 @@ fn apply_stat(df: LazyFrame, stat: &sql::Stat) -> LazyFrame {
         sql::Stat::Sort(sort) => df.sort(&sort.column, Default::default()),
         sql::Stat::Describe => {
             let old = df.clone();
-            let df = match old.clone().collect() {
-                Ok(df) => df,
-                // Return the erroneous LazyFrame so that the error is still preserved
-                Err(_) => return old,
-            };
+            let df = old.clone().collect()?;
             let df = df.describe(None).unwrap();
             df.lazy()
         }
-    }
+        sql::Stat::Join(join) => {
+            match join {
+                sql::JoinStat::SingleCol(join) => {
+                    let other = others
+                        .get(&join.other)
+                        .ok_or_else(|| ApplyStatError::DfNotExists(join.other.to_string()))?
+                        .clone();
+                    // let left_on: Vec<_> = join.left_on.iter().map(convert_expr).collect();
+                    // let right_on: Vec<_> = join.right_on.iter().map(convert_expr).collect();
+                    let left_on = convert_expr(&join.left_on);
+                    let right_on = match &join.right_on {
+                        Some(right_on) => convert_expr(right_on),
+                        None => left_on.clone(),
+                    };
+                    match join.ty {
+                        sql::SingleColJoinType::Left => df.left_join(other, left_on, right_on),
+                        sql::SingleColJoinType::Right => other.left_join(df, left_on, right_on),
+                        sql::SingleColJoinType::Inner => df.inner_join(other, left_on, right_on),
+                        sql::SingleColJoinType::Outer => df.outer_join(other, left_on, right_on),
+                    }
+                }
+            }
+        }
+    })
+}
+
+#[derive(Debug, Error)]
+pub enum ApplyStatError {
+    #[error("LazyFrame::collect: {0}")]
+    DfCollect(#[from] PolarsError),
+    #[error("LazyFrame not exists: {0}")]
+    DfNotExists(String),
 }
 
 fn convert_expr(expr: &sql::Expr) -> polars::lazy::dsl::Expr {

@@ -1,9 +1,11 @@
 use std::{
     borrow::Cow,
+    collections::HashMap,
     io::Write,
     path::{Path, PathBuf},
 };
 
+use anyhow::Context;
 use clap::Parser;
 use fancy_regex::Regex;
 use handler::{HandleLineResult, LineHandler};
@@ -21,12 +23,14 @@ pub struct Cli {
     /// Input file containing a data frame
     #[clap(short, long)]
     input: PathBuf,
+    /// Input files each containing a data frame labeled as a variable for join operations
+    ///
+    /// Format: `name,path`
+    #[clap(short, long)]
+    join: Vec<String>,
     /// Output file storing the modified data frame
     #[clap(short, long)]
     output: Option<PathBuf>,
-    /// Output file storing the effective SQL statements
-    #[clap(short, long)]
-    sql_output: Option<PathBuf>,
     /// Evaluate the data frame for every input line
     #[clap(short, long, default_value_t = false)]
     eager: bool,
@@ -39,14 +43,21 @@ impl Cli {
             println!("{df}");
             if let Some(output) = &self.output {
                 write_df_output(df.clone(), output)?;
-            }
-            if let Some(output) = &self.sql_output {
+
+                let mut output = output.clone();
+                output.set_extension("dfsql");
                 write_sql_output(handler.history().iter(), output)?;
             }
             Ok(())
         };
         let mut df = LazyCsvReader::new(self.input).has_header(true).finish()?;
-        let mut handler = LineHandler::new(df.clone());
+        let mut others = HashMap::new();
+        for other in self.join {
+            let (name, path) = other.split_once(',').context("name,path")?;
+            let df = LazyCsvReader::new(path).has_header(true).finish()?;
+            others.insert(name.to_string(), df);
+        }
+        let mut handler = LineHandler::new(df.clone(), others);
         if self.eager {
             write_repl_output(df.clone(), &handler)?;
         }
@@ -97,19 +108,26 @@ impl Cli {
 }
 
 pub mod handler {
+    use std::collections::HashMap;
+
     use polars::{lazy::frame::LazyFrame, prelude::SchemaRef};
-    use sql_repl::{df::apply, sql};
+    use sql_repl::{
+        df::{apply, ApplyStatError},
+        sql,
+    };
 
     pub struct LineHandler {
         history: Vec<String>,
         original_df: LazyFrame,
+        others: HashMap<String, LazyFrame>,
     }
 
     impl LineHandler {
-        pub fn new(original_df: LazyFrame) -> Self {
+        pub fn new(original_df: LazyFrame, others: HashMap<String, LazyFrame>) -> Self {
             Self {
                 history: vec![],
                 original_df,
+                others,
             }
         }
 
@@ -131,7 +149,7 @@ pub mod handler {
                     return Ok(HandleLineResult::Updated(self.original_df.clone()));
                 }
                 let sql = self.history.iter().map(|s| sql::parse(s).unwrap());
-                let df = apply_history(self.original_df.clone(), sql);
+                let df = apply_history(self.original_df.clone(), sql, &self.others)?;
                 return Ok(HandleLineResult::Updated(df));
             }
             if trimmed_line == "schema" {
@@ -141,7 +159,7 @@ pub mod handler {
             let Some(sql) = sql::parse(&line) else {
                 return Ok(HandleLineResult::Continue);
             };
-            let df = apply(df, &sql);
+            let df = apply(df, &sql, &self.others)?;
             if !trimmed_line.is_empty() {
                 self.history.push(line);
             }
@@ -160,8 +178,16 @@ pub mod handler {
         Schema(SchemaRef),
     }
 
-    fn apply_history(df: LazyFrame, sql: impl Iterator<Item = sql::S>) -> LazyFrame {
-        sql.fold(df, |df, sql| apply(df, &sql))
+    fn apply_history(
+        df: LazyFrame,
+        sql: impl Iterator<Item = sql::S>,
+        others: &HashMap<String, LazyFrame>,
+    ) -> Result<LazyFrame, ApplyStatError> {
+        let mut df = df;
+        for s in sql {
+            df = apply(df, &s, others)?;
+        }
+        Ok(df)
     }
 }
 
@@ -206,6 +232,12 @@ impl SqlHelper {
             ("reverse", color_keyword()),
             ("sort", color_keyword()),
             ("describe", color_keyword()),
+            ("join", color_keyword()),
+            ("on", color_keyword()),
+            ("left", color_keyword()),
+            ("right", color_keyword()),
+            ("inner", color_keyword()),
+            ("outer", color_keyword()),
             ("abs", color_functor()),
             ("sum", color_functor()),
             ("count", color_functor()),
