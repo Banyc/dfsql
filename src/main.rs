@@ -1,22 +1,25 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
-    io::Write,
+    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
 };
 
 use anyhow::Context;
 use clap::Parser;
 use fancy_regex::Regex;
-use handler::{HandleLineResult, LineHandler};
+use handler::{HandleLineResult, LineExecutor};
 use polars::{
     frame::DataFrame,
     io::{csv::CsvWriter, SerWriter},
     lazy::frame::{LazyCsvReader, LazyFileListReader, LazyFrame},
 };
 use rustyline::{
-    error::ReadlineError, highlight::Highlighter, Completer, Editor, Helper, Hinter, Validator,
+    error::ReadlineError, highlight::Highlighter, history::History, Completer, Editor, Helper,
+    Hinter, Validator,
 };
+
+const SQL_EXTENSION: &str = "dfsql";
 
 #[derive(Debug, Parser)]
 pub struct Cli {
@@ -38,30 +41,50 @@ pub struct Cli {
 
 impl Cli {
     pub fn run(self) -> anyhow::Result<()> {
-        let write_repl_output = |df: LazyFrame, handler: &LineHandler| -> anyhow::Result<()> {
-            let df = df.collect()?;
-            println!("{df}");
-            if let Some(output) = &self.output {
-                write_df_output(df.clone(), output)?;
-
-                let mut output = output.clone();
-                output.set_extension("dfsql");
-                write_sql_output(handler.history().iter(), output)?;
-            }
-            Ok(())
-        };
-        let mut df = LazyCsvReader::new(self.input).has_header(true).finish()?;
+        let mut df = LazyCsvReader::new(&self.input).has_header(true).finish()?;
         let mut others = HashMap::new();
-        for other in self.join {
+        for other in &self.join {
             let (name, path) = other.split_once(',').context("name,path")?;
             let df = LazyCsvReader::new(path).has_header(true).finish()?;
             others.insert(name.to_string(), df);
         }
-        let mut handler = LineHandler::new(df.clone(), others);
-        if self.eager {
-            write_repl_output(df.clone(), &handler)?;
-        }
+        let mut handler = LineExecutor::new(df.clone(), others);
         let mut rl = Editor::new()?;
+        if self.eager {
+            let lines = if let Some(output) = &self.output {
+                let mut output = output.clone();
+                output.set_extension(SQL_EXTENSION);
+                if let Ok(file) = std::fs::File::options().read(true).open(output) {
+                    let mut reader = BufReader::new(file);
+                    let mut lines = vec![];
+                    loop {
+                        let mut line = String::new();
+                        if reader.read_line(&mut line)? == 0 {
+                            // EOF
+                            break;
+                        }
+                        if line.ends_with('\n') {
+                            line.pop();
+                        }
+                        lines.push(line);
+                    }
+                    lines
+                } else {
+                    vec![]
+                }
+            } else {
+                vec![]
+            };
+
+            self.write_repl_output(df.clone(), &handler)?;
+            for line in lines {
+                println!("> {line}");
+                match self.handle_line(line, df.clone(), &mut handler, &mut rl) {
+                    Ok(new) => df = new,
+                    Err(_) => break,
+                };
+            }
+        }
         rl.set_helper(Some(SqlHelper::new()));
         loop {
             let line = rl.readline("> ");
@@ -75,33 +98,61 @@ impl Cli {
                     break;
                 }
             };
-            let _ = rl.add_history_entry(&line);
-            df = match handler.handle_line(df.clone(), line) {
-                Ok(HandleLineResult::Exit) => break,
-                Ok(HandleLineResult::Updated(new)) => new,
-                Ok(HandleLineResult::Continue) => continue,
-                Ok(HandleLineResult::Schema(schema)) => {
-                    println!("{schema:?}");
-                    continue;
-                }
-                Err(e) => {
-                    eprintln!("{e}");
-                    break;
-                }
+            match self.handle_line(line, df.clone(), &mut handler, &mut rl) {
+                Ok(new) => df = new,
+                Err(_) => break,
             };
-            if self.eager {
-                if let Err(e) = write_repl_output(df.clone(), &handler) {
-                    eprintln!("{e}");
-                    // Rollback
-                    df = match handler.handle_line(df, String::from("undo")) {
-                        Ok(HandleLineResult::Updated(new)) => new,
-                        _ => panic!(),
-                    };
-                }
-            }
         }
         if !self.eager {
-            write_repl_output(df, &handler)?;
+            self.write_repl_output(df, &handler)?;
+        }
+        Ok(())
+    }
+
+    fn handle_line<H: Helper, I: History>(
+        &self,
+        line: String,
+        df: LazyFrame,
+        handler: &mut LineExecutor,
+        rl: &mut Editor<H, I>,
+    ) -> Result<LazyFrame, ()> {
+        let _ = rl.add_history_entry(&line);
+        let df = match handler.handle_line(df.clone(), line) {
+            Ok(HandleLineResult::Exit) => return Err(()),
+            Ok(HandleLineResult::Updated(new)) => new,
+            Ok(HandleLineResult::Continue) => return Ok(df),
+            Ok(HandleLineResult::Schema(schema)) => {
+                println!("{schema:?}");
+                return Ok(df);
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                return Err(());
+            }
+        };
+        if self.eager {
+            if let Err(e) = self.write_repl_output(df.clone(), handler) {
+                eprintln!("{e}");
+                // Rollback
+                let df = match handler.handle_line(df, String::from("undo")) {
+                    Ok(HandleLineResult::Updated(new)) => new,
+                    _ => panic!(),
+                };
+                return Ok(df);
+            }
+        }
+        Ok(df)
+    }
+
+    fn write_repl_output(&self, df: LazyFrame, handler: &LineExecutor) -> anyhow::Result<()> {
+        let df = df.collect()?;
+        println!("{df}");
+        if let Some(output) = &self.output {
+            write_df_output(df.clone(), output)?;
+
+            let mut output = output.clone();
+            output.set_extension(SQL_EXTENSION);
+            write_sql_output(handler.history().iter(), output)?;
         }
         Ok(())
     }
@@ -116,13 +167,13 @@ pub mod handler {
     };
     use polars::{lazy::frame::LazyFrame, prelude::SchemaRef};
 
-    pub struct LineHandler {
+    pub struct LineExecutor {
         history: Vec<String>,
         original_df: LazyFrame,
         others: HashMap<String, LazyFrame>,
     }
 
-    impl LineHandler {
+    impl LineExecutor {
         pub fn new(original_df: LazyFrame, others: HashMap<String, LazyFrame>) -> Self {
             Self {
                 history: vec![],
