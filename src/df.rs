@@ -184,6 +184,10 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
                 let pattern = convert_expr(&contains.pattern);
                 str.str().contains(pattern, true)
             }
+            sql::expr::StrExpr::Extract(extract) => {
+                let str = convert_expr(&extract.str);
+                str.str().extract(&extract.pattern, extract.group)
+            }
         },
     }
 }

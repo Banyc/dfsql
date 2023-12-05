@@ -215,6 +215,7 @@ fn conditional<'a>() -> impl Parser<'a, &'a str, Conditional, extra::Err<Rich<'a
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StringFunctor {
     Contains,
+    Extract,
 }
 
 fn string_functor<'a>(

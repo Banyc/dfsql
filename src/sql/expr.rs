@@ -310,13 +310,15 @@ fn cast_expr<'a>(
 #[derive(Debug, Clone, PartialEq)]
 pub enum StrExpr {
     Contains(Contains),
+    Extract(Extract),
 }
 
 fn str_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], StrExpr, extra::Err<Rich<'a, Token>>> + Clone {
     let contains = contains(expr.clone()).map(StrExpr::Contains);
-    choice((contains,))
+    let extract = extract(expr.clone()).map(StrExpr::Extract);
+    choice((contains, extract))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -332,6 +334,29 @@ fn contains<'a>(
         .ignore_then(expr.clone())
         .then(expr.clone())
         .map(|(pattern, str)| Contains { str, pattern })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Extract {
+    pub str: Expr,
+    pub pattern: String,
+    pub group: usize,
+}
+
+fn extract<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], Extract, extra::Err<Rich<'a, Token>>> + Clone {
+    let group = select_ref! { Token::Literal(Literal::Int(group)) => group }
+        .map(|group| group.parse::<usize>().unwrap());
+    just(Token::StringFunctor(StringFunctor::Extract))
+        .ignore_then(string_token())
+        .then(group)
+        .then(expr)
+        .map(|((pattern, group), str)| Extract {
+            str,
+            pattern,
+            group,
+        })
 }
 
 #[cfg(test)]
