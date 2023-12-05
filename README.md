@@ -8,6 +8,14 @@
 cargo install dfsql
 ```
 
+## How to run
+
+```bash
+dfsql --eager --input your.csv --output a-new.csv
+# ...or
+dfsql -e -i your.csv -o a-new.csv
+```
+
 ## REPL
 
 - `exit`/`quit`: exit the REPL loop.
