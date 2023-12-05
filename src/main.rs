@@ -303,6 +303,7 @@ impl SqlHelper {
             ("col", color_functor()),
             ("exclude", color_functor()),
             ("cast", color_functor()),
+            ("contains", color_functor()),
             ("if", color_control_flow()),
             ("then", color_control_flow()),
             ("else", color_control_flow()),

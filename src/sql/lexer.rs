@@ -11,6 +11,7 @@ pub enum Token {
     Conditional(Conditional),
     Type(Type),
     Cast,
+    StringFunctor(StringFunctor),
     Parens(Vec<Token>),
     Brackets(Vec<Token>),
     LeftAngle,
@@ -71,6 +72,7 @@ pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, c
             type_keyword().map(Token::Type),
             conditional().map(Token::Conditional),
             functor,
+            string_functor().map(Token::StringFunctor),
             group,
             left_angle,
             right_angle,
@@ -208,6 +210,17 @@ fn conditional<'a>() -> impl Parser<'a, &'a str, Conditional, extra::Err<Rich<'a
     let then = text::keyword("then").to(Conditional::Then);
     let otherwise = text::keyword("else").to(Conditional::Else);
     choice((when, then, otherwise)).boxed()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StringFunctor {
+    Contains,
+}
+
+fn string_functor<'a>(
+) -> impl Parser<'a, &'a str, StringFunctor, extra::Err<Rich<'a, char>>> + Clone {
+    let contains = text::keyword("contains").to(StringFunctor::Contains);
+    choice((contains,)).boxed()
 }
 
 /// Ref: <https://github.com/zesterer/chumsky/blob/dce5918bd2dad591ab399d2e191254640a9ed14f/examples/json.rs#L64>

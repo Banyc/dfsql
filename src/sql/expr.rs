@@ -1,7 +1,7 @@
 use chumsky::prelude::*;
 
 use super::{
-    lexer::{AggOperator, Conditional, Literal, StatKeyword, Token, Type},
+    lexer::{AggOperator, Conditional, Literal, StatKeyword, StringFunctor, Token, Type},
     string_token, variable_token,
 };
 
@@ -16,6 +16,7 @@ pub enum Expr {
     Alias(Box<AliasExpr>),
     Conditional(Box<ConditionalExpr>),
     Cast(Box<CastExpr>),
+    Str(Box<StrExpr>),
 }
 
 pub fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -35,7 +36,8 @@ pub fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Toke
             .map(Box::new)
             .map(Expr::Conditional);
         let cast = cast_expr(expr.clone()).map(Box::new).map(Expr::Cast);
-        let atom = choice((atom, agg, alias, unary, conditional, cast)).boxed();
+        let str = str_expr(expr.clone()).map(Box::new).map(Expr::Str);
+        let atom = choice((atom, agg, alias, unary, conditional, cast, str)).boxed();
 
         let term = term_expr(atom);
         let sum = sum_expr(term);
@@ -303,6 +305,33 @@ fn cast_expr<'a>(
         .ignore_then(select_ref! { Token::Type(ty) => *ty })
         .then(expr)
         .map(|(ty, expr)| CastExpr { expr, ty })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum StrExpr {
+    Contains(Contains),
+}
+
+fn str_expr<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], StrExpr, extra::Err<Rich<'a, Token>>> + Clone {
+    let contains = contains(expr.clone()).map(StrExpr::Contains);
+    choice((contains,))
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Contains {
+    pub str: Expr,
+    pub pattern: Expr,
+}
+
+fn contains<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], Contains, extra::Err<Rich<'a, Token>>> + Clone {
+    just(Token::StringFunctor(StringFunctor::Contains))
+        .ignore_then(expr.clone())
+        .then(expr.clone())
+        .map(|(pattern, str)| Contains { str, pattern })
 }
 
 #[cfg(test)]

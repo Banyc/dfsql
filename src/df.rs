@@ -178,5 +178,12 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
             let expr = convert_expr(&cast.expr);
             expr.cast(ty)
         }
+        sql::expr::Expr::Str(str) => match str.as_ref() {
+            sql::expr::StrExpr::Contains(contains) => {
+                let str = convert_expr(&contains.str);
+                let pattern = convert_expr(&contains.pattern);
+                str.str().contains(pattern, true)
+            }
+        },
     }
 }
