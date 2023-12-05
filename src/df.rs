@@ -28,7 +28,7 @@ fn apply_stat(
             df.select(columns)
         }
         sql::Stat::GroupAgg(group_agg) => {
-            let group_by: Vec<_> = group_agg.group_by.iter().map(|s| s.as_str()).collect();
+            let group_by: Vec<_> = group_agg.group_by.iter().map(String::as_str).collect();
             let agg: Vec<_> = group_agg.agg.iter().map(convert_expr).collect();
             df.group_by(group_by).agg(agg)
         }
