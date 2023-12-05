@@ -2,6 +2,12 @@
 
 ![](img/terminal.png)
 
+## Install
+
+```bash
+cargo install dfsql
+```
+
 ## REPL
 
 - `exit`/`quit`: exit the REPL loop.
