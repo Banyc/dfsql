@@ -305,6 +305,7 @@ impl SqlHelper {
             ("cast", color_functor()),
             ("contains", color_functor()),
             ("extract", color_functor()),
+            ("all", color_functor()),
             ("if", color_control_flow()),
             ("then", color_control_flow()),
             ("else", color_control_flow()),

@@ -216,12 +216,15 @@ fn conditional<'a>() -> impl Parser<'a, &'a str, Conditional, extra::Err<Rich<'a
 pub enum StringFunctor {
     Contains,
     Extract,
+    All,
 }
 
 fn string_functor<'a>(
 ) -> impl Parser<'a, &'a str, StringFunctor, extra::Err<Rich<'a, char>>> + Clone {
     let contains = text::keyword("contains").to(StringFunctor::Contains);
-    choice((contains,)).boxed()
+    let extract = text::keyword("extract").to(StringFunctor::Extract);
+    let all = text::keyword("all").to(StringFunctor::All);
+    choice((contains, extract, all)).boxed()
 }
 
 /// Ref: <https://github.com/zesterer/chumsky/blob/dce5918bd2dad591ab399d2e191254640a9ed14f/examples/json.rs#L64>

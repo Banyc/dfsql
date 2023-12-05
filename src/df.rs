@@ -188,6 +188,11 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
                 let str = convert_expr(&extract.str);
                 str.str().extract(&extract.pattern, extract.group)
             }
+            sql::expr::StrExpr::ExtractAll(extract_all) => {
+                let str = convert_expr(&extract_all.str);
+                let pattern = convert_expr(&extract_all.pattern);
+                str.str().extract_all(pattern)
+            }
         },
     }
 }

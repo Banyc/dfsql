@@ -311,6 +311,7 @@ fn cast_expr<'a>(
 pub enum StrExpr {
     Contains(Contains),
     Extract(Extract),
+    ExtractAll(ExtractAll),
 }
 
 fn str_expr<'a>(
@@ -318,7 +319,8 @@ fn str_expr<'a>(
 ) -> impl Parser<'a, &'a [Token], StrExpr, extra::Err<Rich<'a, Token>>> + Clone {
     let contains = contains(expr.clone()).map(StrExpr::Contains);
     let extract = extract(expr.clone()).map(StrExpr::Extract);
-    choice((contains, extract))
+    let extract_all = extract_all(expr.clone()).map(StrExpr::ExtractAll);
+    choice((contains, extract, extract_all))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -357,6 +359,22 @@ fn extract<'a>(
             pattern,
             group,
         })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtractAll {
+    pub str: Expr,
+    pub pattern: Expr,
+}
+
+fn extract_all<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], ExtractAll, extra::Err<Rich<'a, Token>>> + Clone {
+    just(Token::StringFunctor(StringFunctor::Extract))
+        .ignore_then(just(Token::StringFunctor(StringFunctor::All)))
+        .ignore_then(expr.clone())
+        .then(expr)
+        .map(|(pattern, str)| ExtractAll { str, pattern })
 }
 
 #[cfg(test)]
