@@ -10,6 +10,7 @@ use clap::Parser;
 use fancy_regex::Regex;
 use handler::{HandleLineResult, LineExecutor};
 use polars::{
+    error::PolarsError,
     frame::DataFrame,
     io::{csv::CsvWriter, SerWriter},
     lazy::frame::{LazyCsvReader, LazyFileListReader, LazyFrame},
@@ -41,11 +42,11 @@ pub struct Cli {
 
 impl Cli {
     pub fn run(self) -> anyhow::Result<()> {
-        let mut df = LazyCsvReader::new(&self.input).has_header(true).finish()?;
+        let mut df = read_df_file(&self.input)?;
         let mut others = HashMap::new();
         for other in &self.join {
             let (name, path) = other.split_once(',').context("name,path")?;
-            let df = LazyCsvReader::new(path).has_header(true).finish()?;
+            let df = read_df_file(path)?;
             others.insert(name.to_string(), df);
         }
         let mut handler = LineExecutor::new(df.clone(), others);
@@ -155,6 +156,30 @@ impl Cli {
             write_sql_output(handler.history().iter(), output)?;
         }
         Ok(())
+    }
+}
+
+fn read_df_file(path: impl AsRef<Path>) -> Result<LazyFrame, PolarsError> {
+    let mut infer_schema_length = 100;
+    loop {
+        let e = match LazyCsvReader::new(&path)
+            .has_header(true)
+            .with_infer_schema_length(Some(infer_schema_length))
+            .finish()
+        {
+            Ok(df) => return Ok(df),
+            Err(PolarsError::ComputeError(e)) => {
+                if e.contains(r#"increasing `infer_schema_length`"#) {
+                    if let Some(new) = infer_schema_length.checked_mul(2) {
+                        infer_schema_length = new;
+                        continue;
+                    };
+                }
+                PolarsError::ComputeError(e)
+            }
+            Err(e) => e,
+        };
+        return Err(e);
     }
 }
 
