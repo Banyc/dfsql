@@ -168,8 +168,8 @@ fn single_col_join_stat<'a>(
 #[cfg(test)]
 mod tests {
     use crate::sql::{
-        expr::{AggExpr, BinaryExpr, BinaryOperator, ExcludeExpr, UnaryAggExpr},
-        lexer::{lexer, AggOperator},
+        expr::{BinaryExpr, BinaryOperator, ExcludeExpr, UnaryExpr, UnaryOperator},
+        lexer::lexer,
     };
 
     use super::*;
@@ -206,14 +206,14 @@ mod tests {
             GroupAggStat {
                 group_by: vec![String::from("foo"), String::from("bar")],
                 agg: vec![
-                    Expr::Agg(Box::new(AggExpr::Unary(UnaryAggExpr {
-                        operator: AggOperator::Sum,
+                    Expr::Unary(Box::new(UnaryExpr {
+                        operator: UnaryOperator::Sum,
                         expr: Expr::Col(String::from("foo")),
-                    }))),
-                    Expr::Agg(Box::new(AggExpr::Unary(UnaryAggExpr {
-                        operator: AggOperator::Count,
+                    })),
+                    Expr::Unary(Box::new(UnaryExpr {
+                        operator: UnaryOperator::Count,
                         expr: Expr::Col(String::from("bar")),
-                    }))),
+                    })),
                 ],
             }
         );

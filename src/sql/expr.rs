@@ -1,7 +1,7 @@
 use chumsky::prelude::*;
 
 use super::{
-    lexer::{AggOperator, Conditional, Literal, StatKeyword, StringFunctor, Token, Type},
+    lexer::{Conditional, ExprKeyword, Literal, StatKeyword, StringFunctor, Symbol, Token, Type},
     string_token, variable_token,
 };
 
@@ -12,11 +12,12 @@ pub enum Expr {
     Literal(Literal),
     Binary(Box<BinaryExpr>),
     Unary(Box<UnaryExpr>),
-    Agg(Box<AggExpr>),
     Alias(Box<AliasExpr>),
     Conditional(Box<ConditionalExpr>),
     Cast(Box<CastExpr>),
     Str(Box<StrExpr>),
+    Standalone(Box<StandaloneExpr>),
+    SortBy(Box<SortByExpr>),
 }
 
 pub fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -29,15 +30,26 @@ pub fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Toke
         let exclude = exclude_expr().map(Expr::Exclude);
         let literal = select_ref! { Token::Literal(lit) => lit.clone() }.map(Expr::Literal);
         let atom = choice((col, exclude, literal, parens));
-        let agg = agg_expr(expr.clone()).map(Box::new).map(Expr::Agg);
         let alias = alias_expr(expr.clone()).map(Box::new).map(Expr::Alias);
         let unary = unary_expr(expr.clone()).map(Box::new).map(Expr::Unary);
+        let standalone = standalone_expr().map(Box::new).map(Expr::Standalone);
+        let sort_by = sort_by_expr(expr.clone()).map(Box::new).map(Expr::SortBy);
         let conditional = conditional_expr(expr.clone())
             .map(Box::new)
             .map(Expr::Conditional);
         let cast = cast_expr(expr.clone()).map(Box::new).map(Expr::Cast);
         let str = str_expr(expr.clone()).map(Box::new).map(Expr::Str);
-        let atom = choice((atom, agg, alias, unary, conditional, cast, str)).boxed();
+        let atom = choice((
+            atom,
+            alias,
+            unary,
+            standalone,
+            sort_by,
+            conditional,
+            cast,
+            str,
+        ))
+        .boxed();
 
         let term = term_expr(atom);
         let sum = sum_expr(term);
@@ -53,9 +65,9 @@ pub fn lax_col_name<'a>(
 }
 
 fn col_expr<'a>() -> impl Parser<'a, &'a [Token], String, extra::Err<Rich<'a, Token>>> + Clone {
-    let any = just(Token::Mul).to(String::from("*"));
+    let any = just(Token::Symbol(Symbol::Mul)).to(String::from("*"));
     let name = choice((string_token(), variable_token(), any));
-    just(Token::Col).ignore_then(name)
+    just(Token::ExprKeyword(ExprKeyword::Col)).ignore_then(name)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -65,7 +77,7 @@ pub struct ExcludeExpr {
 
 fn exclude_expr<'a>(
 ) -> impl Parser<'a, &'a [Token], ExcludeExpr, extra::Err<Rich<'a, Token>>> + Clone {
-    just(Token::Exclude)
+    just(Token::ExprKeyword(ExprKeyword::Exclude))
         .ignore_then(lax_col_name().repeated().collect())
         .map(|columns| ExcludeExpr { columns })
 }
@@ -95,8 +107,8 @@ pub enum BinaryOperator {
 fn term_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
-    let mul = just(Token::Mul).to(BinaryOperator::Mul);
-    let div = just(Token::Div).to(BinaryOperator::Div);
+    let mul = just(Token::Symbol(Symbol::Mul)).to(BinaryOperator::Mul);
+    let div = just(Token::Symbol(Symbol::Div)).to(BinaryOperator::Div);
     let operator = choice((mul, div));
     binary_expr(operator, expr)
 }
@@ -104,8 +116,8 @@ fn term_expr<'a>(
 fn sum_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
-    let add = just(Token::Add).to(BinaryOperator::Add);
-    let sub = just(Token::Sub).to(BinaryOperator::Sub);
+    let add = just(Token::Symbol(Symbol::Add)).to(BinaryOperator::Add);
+    let sub = just(Token::Symbol(Symbol::Sub)).to(BinaryOperator::Sub);
     let operator = choice((add, sub));
     binary_expr(operator, expr)
 }
@@ -113,14 +125,14 @@ fn sum_expr<'a>(
 fn cmp_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
-    let eq = just(Token::Eq).to(BinaryOperator::Eq);
-    let lt = just(Token::LeftAngle).to(BinaryOperator::Lt);
-    let lt_eq = just(Token::LeftAngle)
-        .then(just(Token::Eq))
+    let eq = just(Token::Symbol(Symbol::Eq)).to(BinaryOperator::Eq);
+    let lt = just(Token::Symbol(Symbol::LeftAngle)).to(BinaryOperator::Lt);
+    let lt_eq = just(Token::Symbol(Symbol::LeftAngle))
+        .then(just(Token::Symbol(Symbol::Eq)))
         .to(BinaryOperator::LtEq);
-    let gt = just(Token::RightAngle).to(BinaryOperator::Gt);
-    let gt_eq = just(Token::RightAngle)
-        .then(just(Token::Eq))
+    let gt = just(Token::Symbol(Symbol::RightAngle)).to(BinaryOperator::Gt);
+    let gt_eq = just(Token::Symbol(Symbol::RightAngle))
+        .then(just(Token::Symbol(Symbol::Eq)))
         .to(BinaryOperator::GtEq);
     let operator = choice((eq, lt_eq, lt, gt_eq, gt));
     binary_expr(operator, expr)
@@ -129,8 +141,8 @@ fn cmp_expr<'a>(
 fn logic_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
-    let and = just(Token::Ampersand).to(BinaryOperator::And);
-    let or = just(Token::Pipe).to(BinaryOperator::Or);
+    let and = just(Token::Symbol(Symbol::Ampersand)).to(BinaryOperator::And);
+    let or = just(Token::Symbol(Symbol::Pipe)).to(BinaryOperator::Or);
     let operator = choice((and, or));
     binary_expr(operator, expr)
 }
@@ -150,47 +162,6 @@ fn binary_expr<'a>(
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct UnaryExpr {
-    pub operator: UnaryOperator,
-    pub expr: Expr,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum UnaryOperator {
-    Neg,
-    Not,
-    Abs,
-}
-
-fn unary_expr<'a>(
-    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
-) -> impl Parser<'a, &'a [Token], UnaryExpr, extra::Err<Rich<'a, Token>>> + Clone {
-    let sub = just(Token::Sub).to(UnaryOperator::Neg);
-    let not = just(Token::Bang).to(UnaryOperator::Not);
-    let abs = just(Token::Abs).to(UnaryOperator::Abs);
-
-    choice((sub, not, abs))
-        .then(expr)
-        .map(|(operator, expr)| UnaryExpr { operator, expr })
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum AggExpr {
-    Unary(UnaryAggExpr),
-    Standalone(StandaloneAggExpr),
-    SortBy(SortByExpr),
-}
-
-fn agg_expr<'a>(
-    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
-) -> impl Parser<'a, &'a [Token], AggExpr, extra::Err<Rich<'a, Token>>> + Clone {
-    let sort_by = sort_by_expr(expr.clone()).map(AggExpr::SortBy);
-    let unary = unary_agg_expr(expr.clone()).map(AggExpr::Unary);
-    let standalone = standalone_agg_expr().map(AggExpr::Standalone);
-    choice((sort_by, unary, standalone))
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub struct SortByExpr {
     pub pairs: Vec<(Expr, bool)>,
     pub expr: Expr,
@@ -204,42 +175,80 @@ fn sort_by_expr<'a>(
         .then(select_ref! { Token::Literal(Literal::Bool(descending)) => *descending });
     just(Token::Stat(StatKeyword::Sort))
         .ignore_then(expr)
-        .then_ignore(just(Token::By))
+        .then_ignore(just(Token::ExprKeyword(ExprKeyword::By)))
         .then(pair.repeated().collect())
         .map(|(expr, pairs)| SortByExpr { pairs, expr })
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct UnaryAggExpr {
-    pub operator: AggOperator,
+pub struct UnaryExpr {
+    pub operator: UnaryOperator,
     pub expr: Expr,
 }
 
-fn unary_agg_expr<'a>(
+#[derive(Debug, Clone, PartialEq)]
+pub enum UnaryOperator {
+    Sum,
+    Count,
+    First,
+    Last,
+    Sort,
+    Reverse,
+    Mean,
+    Median,
+    Abs,
+    Unique,
+    Not,
+    Neg,
+}
+
+macro_rules! select_map_named_unary_op {
+    ($name:ident) => {
+        select_ref! { Token::ExprKeyword(ExprKeyword::$name) => UnaryOperator::$name }
+    };
+}
+
+macro_rules! choice_named_unary_op {
+    ($($name:ident),*) => {
+        {
+            $(
+                let $name = select_map_named_unary_op!($name);
+            )*
+            choice(( $($name,)* ))
+        }
+    };
+}
+
+fn unary_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
-) -> impl Parser<'a, &'a [Token], UnaryAggExpr, extra::Err<Rich<'a, Token>>> + Clone {
-    let operator = select_ref! { Token::AggOperator(operator) => *operator };
+) -> impl Parser<'a, &'a [Token], UnaryExpr, extra::Err<Rich<'a, Token>>> + Clone {
+    #[allow(non_snake_case)]
+    let named =
+        choice_named_unary_op!(Sum, Count, First, Last, Sort, Reverse, Mean, Median, Abs, Unique);
+    let neg = select_ref! { Token::Symbol(Symbol::Sub) => UnaryOperator::Neg };
+    let not = select_ref! { Token::Symbol(Symbol::Bang) => UnaryOperator::Not };
+    let operator = choice((named, neg, not));
+
     operator
         .then(expr)
-        .map(|(operator, expr)| UnaryAggExpr { operator, expr })
+        .map(|(operator, expr)| UnaryExpr { operator, expr })
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct StandaloneAggExpr {
-    pub operator: StandaloneAggOperator,
+pub struct StandaloneExpr {
+    pub operator: StandaloneOperator,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum StandaloneAggOperator {
+pub enum StandaloneOperator {
     Count,
 }
 
-fn standalone_agg_expr<'a>(
-) -> impl Parser<'a, &'a [Token], StandaloneAggExpr, extra::Err<Rich<'a, Token>>> + Clone {
-    let count =
-        select_ref! { Token::AggOperator(AggOperator::Count) => StandaloneAggOperator::Count };
+fn standalone_expr<'a>(
+) -> impl Parser<'a, &'a [Token], StandaloneExpr, extra::Err<Rich<'a, Token>>> + Clone {
+    let count = select_ref! { Token::ExprKeyword(ExprKeyword::Count) => StandaloneOperator::Count };
     let operator = choice((count,));
-    operator.map(|operator| StandaloneAggExpr { operator })
+    operator.map(|operator| StandaloneExpr { operator })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -251,7 +260,7 @@ pub struct AliasExpr {
 fn alias_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], AliasExpr, extra::Err<Rich<'a, Token>>> + Clone {
-    let alias = just(Token::Alias);
+    let alias = just(Token::ExprKeyword(ExprKeyword::Alias));
     let name = choice((lax_col_name(), string_token()));
     alias
         .ignore_then(name.then(expr))
@@ -301,7 +310,7 @@ pub struct CastExpr {
 fn cast_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], CastExpr, extra::Err<Rich<'a, Token>>> + Clone {
-    just(Token::Cast)
+    just(Token::ExprKeyword(ExprKeyword::Cast))
         .ignore_then(select_ref! { Token::Type(ty) => *ty })
         .then(expr)
         .map(|(ty, expr)| CastExpr { expr, ty })
@@ -396,10 +405,10 @@ mod tests {
                 left: Expr::Literal(Literal::Int(String::from("42"))),
                 right: Expr::Unary(Box::new(UnaryExpr {
                     operator: UnaryOperator::Neg,
-                    expr: Expr::Agg(Box::new(AggExpr::Unary(UnaryAggExpr {
-                        operator: AggOperator::Sum,
+                    expr: Expr::Unary(Box::new(UnaryExpr {
+                        operator: UnaryOperator::Sum,
                         expr: Expr::Col(String::from("foo")),
-                    }))),
+                    })),
                 })),
             }))
         );
@@ -419,10 +428,10 @@ mod tests {
                 left: Expr::Literal(Literal::Int(String::from("42"))),
                 right: Expr::Unary(Box::new(UnaryExpr {
                     operator: UnaryOperator::Neg,
-                    expr: Expr::Agg(Box::new(AggExpr::Unary(UnaryAggExpr {
-                        operator: AggOperator::Sum,
+                    expr: Expr::Unary(Box::new(UnaryExpr {
+                        operator: UnaryOperator::Sum,
                         expr: Expr::Col(String::from("foo")),
-                    }))),
+                    })),
                 })),
             }))
         );
@@ -445,10 +454,10 @@ mod tests {
                     left: Expr::Literal(Literal::Int(String::from("1"))),
                     right: Expr::Unary(Box::new(UnaryExpr {
                         operator: UnaryOperator::Neg,
-                        expr: Expr::Agg(Box::new(AggExpr::Unary(UnaryAggExpr {
-                            operator: AggOperator::Sum,
+                        expr: Expr::Unary(Box::new(UnaryExpr {
+                            operator: UnaryOperator::Sum,
                             expr: Expr::Col(String::from("foo")),
-                        }))),
+                        })),
                     })),
                 })),
             }))
@@ -466,10 +475,10 @@ mod tests {
             expr,
             Expr::Unary(Box::new(UnaryExpr {
                 operator: UnaryOperator::Neg,
-                expr: Expr::Agg(Box::new(AggExpr::Unary(UnaryAggExpr {
-                    operator: AggOperator::Sum,
+                expr: Expr::Unary(Box::new(UnaryExpr {
+                    operator: UnaryOperator::Sum,
                     expr: Expr::Col(String::from("foo")),
-                }))),
+                })),
             }))
         );
     }
@@ -483,10 +492,10 @@ mod tests {
         let expr = parser.parse(&tokens).unwrap();
         assert_eq!(
             expr,
-            Expr::Agg(Box::new(AggExpr::Unary(UnaryAggExpr {
-                operator: AggOperator::Sum,
+            Expr::Unary(Box::new(UnaryExpr {
+                operator: UnaryOperator::Sum,
                 expr: Expr::Col(String::from("foo")),
-            }))),
+            })),
         );
     }
 

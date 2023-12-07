@@ -2,45 +2,20 @@ use chumsky::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    By,
     Stat(StatKeyword),
-    AggOperator(AggOperator),
-    Alias,
-    Col,
-    Exclude,
     Conditional(Conditional),
     Type(Type),
-    Cast,
+    ExprKeyword(ExprKeyword),
     StringFunctor(StringFunctor),
     Parens(Vec<Token>),
     Brackets(Vec<Token>),
-    LeftAngle,
-    RightAngle,
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Eq,
-    Bang,
-    Ampersand,
-    Pipe,
-    Comma,
-    Abs,
     Variable(String),
     Literal(Literal),
+    Symbol(Symbol),
 }
 
 pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>>> + Clone {
     recursive(|tokens| {
-        let by = text::keyword("by").to(Token::By);
-
-        let alias = text::keyword("alias").to(Token::Alias);
-        let col = text::keyword("col").to(Token::Col);
-        let exclude = text::keyword("exclude").to(Token::Exclude);
-        let cast = text::keyword("cast").to(Token::Cast);
-        let abs = just("abs").to(Token::Abs);
-        let functor = choice((alias, col, exclude, cast, abs));
-
         let parens = tokens
             .clone()
             .delimited_by(just('(').padded(), just(')').padded())
@@ -51,40 +26,16 @@ pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, c
             .map(Token::Brackets);
         let group = choice((parens, brackets));
 
-        let left_angle = just('<').to(Token::LeftAngle);
-        let right_angle = just('>').to(Token::RightAngle);
-        let add = just('+').to(Token::Add);
-        let sub = just('-').to(Token::Sub);
-        let mul = just('*').to(Token::Mul);
-        let div = just('/').to(Token::Div);
-        let eq = just('=').to(Token::Eq);
-        let bang = just('!').to(Token::Bang);
-        let ampersand = just('&').to(Token::Ampersand);
-        let pipe = just('|').to(Token::Pipe);
-        let comma = just(',').to(Token::Comma);
-
         let ident = text::ident().map(ToString::to_string).map(Token::Variable);
 
         let token = choice((
-            by,
             stat_keyword().map(Token::Stat),
-            agg_operator().map(Token::AggOperator),
+            expr_keyword().map(Token::ExprKeyword),
             type_keyword().map(Token::Type),
             conditional().map(Token::Conditional),
-            functor,
             string_functor().map(Token::StringFunctor),
             group,
-            left_angle,
-            right_angle,
-            add,
-            sub,
-            mul,
-            div,
-            eq,
-            bang,
-            ampersand,
-            pipe,
-            comma,
+            symbol().map(Token::Symbol),
             literal().map(Token::Literal),
             ident,
         ));
@@ -134,7 +85,49 @@ fn stat_keyword<'a>() -> impl Parser<'a, &'a str, StatKeyword, extra::Err<Rich<'
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum AggOperator {
+pub enum Symbol {
+    Bang,
+    LeftAngle,
+    RightAngle,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Eq,
+    Ampersand,
+    Pipe,
+    Comma,
+}
+
+fn symbol<'a>() -> impl Parser<'a, &'a str, Symbol, extra::Err<Rich<'a, char>>> + Clone {
+    let left_angle = just('<').to(Symbol::LeftAngle);
+    let right_angle = just('>').to(Symbol::RightAngle);
+    let add = just('+').to(Symbol::Add);
+    let sub = just('-').to(Symbol::Sub);
+    let mul = just('*').to(Symbol::Mul);
+    let div = just('/').to(Symbol::Div);
+    let eq = just('=').to(Symbol::Eq);
+    let ampersand = just('&').to(Symbol::Ampersand);
+    let pipe = just('|').to(Symbol::Pipe);
+    let comma = just(',').to(Symbol::Comma);
+    let bang = just('!').to(Symbol::Bang);
+    choice((
+        left_angle,
+        right_angle,
+        add,
+        sub,
+        mul,
+        div,
+        eq,
+        ampersand,
+        pipe,
+        comma,
+        bang,
+    ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ExprKeyword {
     Sum,
     Count,
     First,
@@ -143,18 +136,38 @@ pub enum AggOperator {
     Reverse,
     Mean,
     Median,
+    Abs,
+    Unique,
+    By,
+    Is,
+    Alias,
+    Col,
+    Exclude,
+    Cast,
 }
 
-fn agg_operator<'a>() -> impl Parser<'a, &'a str, AggOperator, extra::Err<Rich<'a, char>>> + Clone {
-    let sum = text::keyword("sum").to(AggOperator::Sum);
-    let count = text::keyword("count").to(AggOperator::Count);
-    let sort = text::keyword("col_sort").to(AggOperator::Sort);
-    let reverse = text::keyword("col_reverse").to(AggOperator::Sort);
-    let first = text::keyword("first").to(AggOperator::First);
-    let last = text::keyword("last").to(AggOperator::Last);
-    let mean = text::keyword("mean").to(AggOperator::Mean);
-    let median = text::keyword("median").to(AggOperator::Median);
-    choice((sum, count, sort, reverse, first, last, mean, median)).boxed()
+fn expr_keyword<'a>() -> impl Parser<'a, &'a str, ExprKeyword, extra::Err<Rich<'a, char>>> + Clone {
+    let sum = text::keyword("sum").to(ExprKeyword::Sum);
+    let count = text::keyword("count").to(ExprKeyword::Count);
+    let sort = text::keyword("col_sort").to(ExprKeyword::Sort);
+    let reverse = text::keyword("col_reverse").to(ExprKeyword::Sort);
+    let first = text::keyword("first").to(ExprKeyword::First);
+    let last = text::keyword("last").to(ExprKeyword::Last);
+    let mean = text::keyword("mean").to(ExprKeyword::Mean);
+    let median = text::keyword("median").to(ExprKeyword::Median);
+    let abs = text::keyword("abs").to(ExprKeyword::Abs);
+    let unique = text::keyword("unique").to(ExprKeyword::Unique);
+    let by = text::keyword("by").to(ExprKeyword::By);
+    let is = text::keyword("is").to(ExprKeyword::Is);
+    let alias = text::keyword("alias").to(ExprKeyword::Alias);
+    let col = text::keyword("col").to(ExprKeyword::Col);
+    let exclude = text::keyword("exclude").to(ExprKeyword::Exclude);
+    let cast = text::keyword("cast").to(ExprKeyword::Cast);
+    choice((
+        sum, count, sort, reverse, first, last, mean, median, abs, unique, by, is, alias, col,
+        exclude, cast,
+    ))
+    .boxed()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -285,22 +298,22 @@ mod tests {
                 Token::Stat(StatKeyword::Select),
                 Token::Stat(StatKeyword::GroupBy),
                 Token::Stat(StatKeyword::Agg),
-                Token::AggOperator(AggOperator::Sum),
-                Token::AggOperator(AggOperator::Count),
+                Token::ExprKeyword(ExprKeyword::Sum),
+                Token::ExprKeyword(ExprKeyword::Count),
                 Token::Stat(StatKeyword::Filter),
-                Token::Alias,
-                Token::Col,
+                Token::ExprKeyword(ExprKeyword::Alias),
+                Token::ExprKeyword(ExprKeyword::Col),
                 Token::Brackets(vec![]),
                 Token::Parens(vec![]),
-                Token::LeftAngle,
-                Token::RightAngle,
+                Token::Symbol(Symbol::LeftAngle),
+                Token::Symbol(Symbol::RightAngle),
                 Token::Variable(String::from("hi")),
-                Token::Add,
-                Token::Sub,
-                Token::Mul,
-                Token::Div,
-                Token::Eq,
-                Token::Sub,
+                Token::Symbol(Symbol::Add),
+                Token::Symbol(Symbol::Sub),
+                Token::Symbol(Symbol::Mul),
+                Token::Symbol(Symbol::Div),
+                Token::Symbol(Symbol::Eq),
+                Token::Symbol(Symbol::Sub),
                 Token::Literal(Literal::Int(String::from("42"))),
                 Token::Literal(Literal::Float(String::from("0.1"))),
                 Token::Literal(Literal::String(String::from("hi"))),

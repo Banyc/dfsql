@@ -117,32 +117,26 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
                 sql::expr::UnaryOperator::Neg => expr.clone() - expr.clone() - expr,
                 sql::expr::UnaryOperator::Not => expr.not(),
                 sql::expr::UnaryOperator::Abs => expr.abs(),
+                sql::expr::UnaryOperator::Sum => expr.sum(),
+                sql::expr::UnaryOperator::Count => expr.count(),
+                sql::expr::UnaryOperator::First => expr.first(),
+                sql::expr::UnaryOperator::Last => expr.last(),
+                sql::expr::UnaryOperator::Sort => expr.sort(false),
+                sql::expr::UnaryOperator::Reverse => expr.reverse(),
+                sql::expr::UnaryOperator::Mean => expr.mean(),
+                sql::expr::UnaryOperator::Median => expr.median(),
+                sql::expr::UnaryOperator::Unique => expr.unique(),
             }
         }
-        sql::expr::Expr::Agg(agg) => match agg.as_ref() {
-            sql::expr::AggExpr::Unary(unary) => {
-                let expr = convert_expr(&unary.expr);
-                match unary.operator {
-                    sql::lexer::AggOperator::Sum => expr.sum(),
-                    sql::lexer::AggOperator::Count => expr.count(),
-                    sql::lexer::AggOperator::First => expr.first(),
-                    sql::lexer::AggOperator::Last => expr.last(),
-                    sql::lexer::AggOperator::Sort => expr.sort(false),
-                    sql::lexer::AggOperator::Reverse => expr.reverse(),
-                    sql::lexer::AggOperator::Mean => expr.mean(),
-                    sql::lexer::AggOperator::Median => expr.median(),
-                }
-            }
-            sql::expr::AggExpr::Standalone(standalone) => match standalone.operator {
-                sql::expr::StandaloneAggOperator::Count => count(),
-            },
-            sql::expr::AggExpr::SortBy(sort_by) => {
-                let columns: Vec<_> = sort_by.pairs.iter().map(|(c, _)| convert_expr(c)).collect();
-                let descending: Vec<_> = sort_by.pairs.iter().map(|(_, d)| *d).collect();
-                let expr = convert_expr(&sort_by.expr);
-                expr.sort_by(columns, descending)
-            }
+        sql::expr::Expr::Standalone(standalone) => match standalone.operator {
+            sql::expr::StandaloneOperator::Count => count(),
         },
+        sql::expr::Expr::SortBy(sort_by) => {
+            let columns: Vec<_> = sort_by.pairs.iter().map(|(c, _)| convert_expr(c)).collect();
+            let descending: Vec<_> = sort_by.pairs.iter().map(|(_, d)| *d).collect();
+            let expr = convert_expr(&sort_by.expr);
+            expr.sort_by(columns, descending)
+        }
         sql::expr::Expr::Alias(alias) => {
             let expr = convert_expr(&alias.expr);
             expr.alias(&alias.name)
