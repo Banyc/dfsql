@@ -345,7 +345,7 @@ impl Highlighter for SqlHelper {
         self.color.replace(line).into()
     }
 
-    fn highlight_char(&self, _line: &str, _pos: usize) -> bool {
+    fn highlight_char(&self, _line: &str, _pos: usize, _forced: bool) -> bool {
         true
     }
 }

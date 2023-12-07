@@ -20,5 +20,5 @@ polars = { version = "0.35.4", features = [
     "lazy_regex",
     "strings",
 ] }
-rustyline = { version = "12.0.0", features = ["derive"] }
+rustyline = { version = "13.0.0", features = ["derive"] }
 thiserror = "1.0.50"
