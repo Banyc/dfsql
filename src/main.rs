@@ -38,15 +38,18 @@ pub struct Cli {
     /// Evaluate the data frame for every input line
     #[clap(short, long, default_value_t = false)]
     eager: bool,
+    /// Set the number of rows to use when inferring the csv schema.
+    #[clap(long, default_value_t = 100)]
+    infer_schema_length: usize,
 }
 
 impl Cli {
     pub fn run(self) -> anyhow::Result<()> {
-        let mut df = read_df_file(&self.input)?;
+        let mut df = read_df_file(&self.input, self.infer_schema_length)?;
         let mut others = HashMap::new();
         for other in &self.join {
             let (name, path) = other.split_once(',').context("name,path")?;
-            let df = read_df_file(path)?;
+            let df = read_df_file(path, self.infer_schema_length)?;
             others.insert(name.to_string(), df);
         }
         let mut handler = LineExecutor::new(df.clone(), others);
@@ -159,28 +162,14 @@ impl Cli {
     }
 }
 
-fn read_df_file(path: impl AsRef<Path>) -> Result<LazyFrame, PolarsError> {
-    let mut infer_schema_length = 100;
-    loop {
-        let e = match LazyCsvReader::new(&path)
-            .has_header(true)
-            .with_infer_schema_length(Some(infer_schema_length))
-            .finish()
-        {
-            Ok(df) => return Ok(df),
-            Err(PolarsError::ComputeError(e)) => {
-                if e.contains(r#"increasing `infer_schema_length`"#) {
-                    if let Some(new) = infer_schema_length.checked_mul(2) {
-                        infer_schema_length = new;
-                        continue;
-                    };
-                }
-                PolarsError::ComputeError(e)
-            }
-            Err(e) => e,
-        };
-        return Err(e);
-    }
+fn read_df_file(
+    path: impl AsRef<Path>,
+    infer_schema_length: usize,
+) -> Result<LazyFrame, PolarsError> {
+    LazyCsvReader::new(&path)
+        .has_header(true)
+        .with_infer_schema_length(Some(infer_schema_length))
+        .finish()
 }
 
 pub mod handler {
