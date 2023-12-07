@@ -126,6 +126,7 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
                 sql::expr::UnaryOperator::Mean => expr.mean(),
                 sql::expr::UnaryOperator::Median => expr.median(),
                 sql::expr::UnaryOperator::Unique => expr.unique(),
+                sql::expr::UnaryOperator::IsNull => expr.is_null(),
             }
         }
         sql::expr::Expr::Standalone(standalone) => match standalone.operator {

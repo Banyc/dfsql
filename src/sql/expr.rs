@@ -200,6 +200,7 @@ pub enum UnaryOperator {
     Unique,
     Not,
     Neg,
+    IsNull,
 }
 
 macro_rules! select_map_named_unary_op {
@@ -227,7 +228,10 @@ fn unary_expr<'a>(
         choice_named_unary_op!(Sum, Count, First, Last, Sort, Reverse, Mean, Median, Abs, Unique);
     let neg = select_ref! { Token::Symbol(Symbol::Sub) => UnaryOperator::Neg };
     let not = select_ref! { Token::Symbol(Symbol::Bang) => UnaryOperator::Not };
-    let operator = choice((named, neg, not));
+    let is_null = just(Token::ExprKeyword(ExprKeyword::Is))
+        .ignore_then(just(Token::Literal(Literal::Null)))
+        .to(UnaryOperator::IsNull);
+    let operator = choice((named, neg, not, is_null));
 
     operator
         .then(expr)
