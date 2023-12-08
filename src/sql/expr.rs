@@ -96,6 +96,7 @@ pub enum BinaryOperator {
     Mul,
     Div,
     Eq,
+    NotEq,
     LtEq,
     Lt,
     GtEq,
@@ -126,6 +127,9 @@ fn cmp_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
     let eq = just(Token::Symbol(Symbol::Eq)).to(BinaryOperator::Eq);
+    let not_eq = just(Token::Symbol(Symbol::Bang))
+        .then(just(Token::Symbol(Symbol::Eq)))
+        .to(BinaryOperator::NotEq);
     let lt = just(Token::Symbol(Symbol::LeftAngle)).to(BinaryOperator::Lt);
     let lt_eq = just(Token::Symbol(Symbol::LeftAngle))
         .then(just(Token::Symbol(Symbol::Eq)))
@@ -134,7 +138,7 @@ fn cmp_expr<'a>(
     let gt_eq = just(Token::Symbol(Symbol::RightAngle))
         .then(just(Token::Symbol(Symbol::Eq)))
         .to(BinaryOperator::GtEq);
-    let operator = choice((eq, lt_eq, lt, gt_eq, gt));
+    let operator = choice((eq, not_eq, lt_eq, lt, gt_eq, gt));
     binary_expr(operator, expr)
 }
 
