@@ -355,6 +355,7 @@ impl SqlHelper {
             ("contains", color_functor()),
             ("extract", color_functor()),
             ("all", color_functor()),
+            ("split", color_functor()),
             ("unique", color_functor()),
             ("nan", color_functor()),
             ("all", color_functor()),

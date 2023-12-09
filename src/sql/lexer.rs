@@ -6,7 +6,7 @@ pub enum Token {
     Conditional(Conditional),
     Type(Type),
     ExprKeyword(ExprKeyword),
-    StringFunctor(StringFunctor),
+    StringKeyword(StringKeyword),
     Parens(Vec<Token>),
     Brackets(Vec<Token>),
     Variable(String),
@@ -33,7 +33,7 @@ pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, c
             expr_keyword().map(Token::ExprKeyword),
             type_keyword().map(Token::Type),
             conditional().map(Token::Conditional),
-            string_functor().map(Token::StringFunctor),
+            string_functor().map(Token::StringKeyword),
             group,
             symbol().map(Token::Symbol),
             literal().map(Token::Literal),
@@ -236,18 +236,20 @@ fn conditional<'a>() -> impl Parser<'a, &'a str, Conditional, extra::Err<Rich<'a
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum StringFunctor {
+pub enum StringKeyword {
     Contains,
     Extract,
     All,
+    Split,
 }
 
 fn string_functor<'a>(
-) -> impl Parser<'a, &'a str, StringFunctor, extra::Err<Rich<'a, char>>> + Clone {
-    let contains = text::keyword("contains").to(StringFunctor::Contains);
-    let extract = text::keyword("extract").to(StringFunctor::Extract);
-    let all = text::keyword("all").to(StringFunctor::All);
-    choice((contains, extract, all)).boxed()
+) -> impl Parser<'a, &'a str, StringKeyword, extra::Err<Rich<'a, char>>> + Clone {
+    let contains = text::keyword("contains").to(StringKeyword::Contains);
+    let extract = text::keyword("extract").to(StringKeyword::Extract);
+    let all = text::keyword("all").to(StringKeyword::All);
+    let split = text::keyword("split").to(StringKeyword::Split);
+    choice((contains, extract, all, split)).boxed()
 }
 
 /// Ref: <https://github.com/zesterer/chumsky/blob/dce5918bd2dad591ab399d2e191254640a9ed14f/examples/json.rs#L64>

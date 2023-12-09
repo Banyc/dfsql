@@ -205,6 +205,11 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
                 let pattern = convert_expr(&extract_all.pattern);
                 str.str().extract_all(pattern)
             }
+            sql::expr::StrExpr::Split(split) => {
+                let str = convert_expr(&split.str);
+                let pattern = convert_expr(&split.pattern);
+                str.str().split(pattern)
+            }
         },
     }
 }

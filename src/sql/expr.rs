@@ -1,7 +1,7 @@
 use chumsky::prelude::*;
 
 use super::{
-    lexer::{Conditional, ExprKeyword, Literal, StatKeyword, StringFunctor, Symbol, Token, Type},
+    lexer::{Conditional, ExprKeyword, Literal, StatKeyword, StringKeyword, Symbol, Token, Type},
     sort_order, string_token, variable_token, SortOrder,
 };
 
@@ -356,6 +356,7 @@ pub enum StrExpr {
     Contains(Contains),
     Extract(Extract),
     ExtractAll(ExtractAll),
+    Split(Split),
 }
 
 fn str_expr<'a>(
@@ -364,7 +365,8 @@ fn str_expr<'a>(
     let contains = contains(expr.clone()).map(StrExpr::Contains);
     let extract = extract(expr.clone()).map(StrExpr::Extract);
     let extract_all = extract_all(expr.clone()).map(StrExpr::ExtractAll);
-    choice((contains, extract, extract_all))
+    let split = split(expr.clone()).map(StrExpr::Split);
+    choice((contains, extract, extract_all, split))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -376,7 +378,7 @@ pub struct Contains {
 fn contains<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Contains, extra::Err<Rich<'a, Token>>> + Clone {
-    just(Token::StringFunctor(StringFunctor::Contains))
+    just(Token::StringKeyword(StringKeyword::Contains))
         .ignore_then(expr.clone())
         .then(expr.clone())
         .map(|(pattern, str)| Contains { str, pattern })
@@ -394,7 +396,7 @@ fn extract<'a>(
 ) -> impl Parser<'a, &'a [Token], Extract, extra::Err<Rich<'a, Token>>> + Clone {
     let group = select_ref! { Token::Literal(Literal::Int(group)) => group }
         .map(|group| group.parse::<usize>().unwrap());
-    just(Token::StringFunctor(StringFunctor::Extract))
+    just(Token::StringKeyword(StringKeyword::Extract))
         .ignore_then(string_token())
         .then(group)
         .then(expr)
@@ -414,11 +416,26 @@ pub struct ExtractAll {
 fn extract_all<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], ExtractAll, extra::Err<Rich<'a, Token>>> + Clone {
-    just(Token::StringFunctor(StringFunctor::Extract))
-        .ignore_then(just(Token::StringFunctor(StringFunctor::All)))
+    just(Token::StringKeyword(StringKeyword::Extract))
+        .ignore_then(just(Token::StringKeyword(StringKeyword::All)))
         .ignore_then(expr.clone())
         .then(expr)
         .map(|(pattern, str)| ExtractAll { str, pattern })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Split {
+    pub str: Expr,
+    pub pattern: Expr,
+}
+
+fn split<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], Split, extra::Err<Rich<'a, Token>>> + Clone {
+    just(Token::StringKeyword(StringKeyword::Split))
+        .ignore_then(expr.clone())
+        .then(expr)
+        .map(|(pattern, str)| Split { str, pattern })
 }
 
 #[cfg(test)]
