@@ -129,6 +129,8 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
                 sql::expr::UnaryOperator::Unique => expr.unique(),
                 sql::expr::UnaryOperator::IsNull => expr.is_null(),
                 sql::expr::UnaryOperator::IsNan => expr.is_nan(),
+                sql::expr::UnaryOperator::All => expr.all(false),
+                sql::expr::UnaryOperator::Any => expr.any(false),
             }
         }
         sql::expr::Expr::Standalone(standalone) => match standalone.operator {

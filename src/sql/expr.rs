@@ -206,6 +206,8 @@ pub enum UnaryOperator {
     Neg,
     IsNull,
     IsNan,
+    All,
+    Any,
 }
 
 macro_rules! select_map_named_unary_op {
@@ -244,7 +246,9 @@ fn unary_expr<'a>(
     let is_null = is!(Token::Literal(Literal::Null) => UnaryOperator::IsNull);
     let is_nan = is!(Token::ExprKeyword(ExprKeyword::Nan) => UnaryOperator::IsNan);
     let is = choice((is_null, is_nan));
-    let operator = choice((named, neg, not, is));
+    let all = just(Token::ExprKeyword(ExprKeyword::All)).to(UnaryOperator::All);
+    let any = just(Token::ExprKeyword(ExprKeyword::Any)).to(UnaryOperator::Any);
+    let operator = choice((named, neg, not, is, all, any));
 
     operator
         .then(expr)
