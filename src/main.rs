@@ -1,12 +1,13 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
 };
 
 use anyhow::{bail, Context};
 use clap::Parser;
+use dfsql::{df::apply, sql};
 use fancy_regex::Regex;
 use handler::{HandleLineResult, LineExecutor};
 use polars::prelude::*;
@@ -19,6 +20,8 @@ const SQL_EXTENSION: &str = "dfsql";
 
 #[derive(Debug, Parser)]
 pub struct Cli {
+    /// `.dfsql` file to execute
+    sql: Option<PathBuf>,
     /// Input file containing a data frame
     #[clap(short, long)]
     input: PathBuf,
@@ -46,6 +49,28 @@ impl Cli {
             let (name, path) = other.split_once(',').context("name,path")?;
             let df = read_df_file(path, self.infer_schema_length)?;
             others.insert(name.to_string(), df);
+        }
+        if let Some(sql_file) = &self.sql {
+            // Non-interactive mode
+            if self.lazy {
+                bail!(
+                    "`lazy` option is unavailable if a `.{SQL_EXTENSION}` is provided via the argument `sql`"
+                );
+            }
+
+            let mut file = std::fs::File::options().read(true).open(sql_file)?;
+            let mut src = String::new();
+            file.read_to_string(&mut src)?;
+            drop(file);
+            let Some(s) = sql::parse(&src) else {
+                return Ok(());
+            };
+            let df = apply(df, &s, &others)?.collect()?;
+            match &self.output {
+                Some(output) => write_df_output(df, output)?,
+                None => println!("{df}"),
+            }
+            return Ok(());
         }
         let mut handler = LineExecutor::new(df.clone(), others);
         let mut rl = Editor::new()?;
