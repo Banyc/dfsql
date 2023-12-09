@@ -73,7 +73,7 @@ dfsql -i your.csv -o a-new.csv
   ```
 - `sort`
   ```py
-  sort <col>
+  sort (asc | desc | ()) <col>
   ```
   ```sql
   sort icpsr_id
@@ -104,10 +104,6 @@ dfsql -i your.csv -o a-new.csv
 - unary operations
   ```sql
   select -a
-  ```
-- aggregate
-  ```py
-  <aggregate> : <expr>? -> <expr>
   ```
   ```sql
   select sum a

@@ -2,7 +2,7 @@ use chumsky::prelude::*;
 
 use super::{
     lexer::{Conditional, ExprKeyword, Literal, StatKeyword, StringFunctor, Symbol, Token, Type},
-    string_token, variable_token,
+    sort_order, string_token, variable_token, SortOrder,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -18,6 +18,7 @@ pub enum Expr {
     Str(Box<StrExpr>),
     Standalone(Box<StandaloneExpr>),
     SortBy(Box<SortByExpr>),
+    Sort(Box<SortExpr>),
 }
 
 pub fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -34,6 +35,7 @@ pub fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Toke
         let unary = unary_expr(expr.clone()).map(Box::new).map(Expr::Unary);
         let standalone = standalone_expr().map(Box::new).map(Expr::Standalone);
         let sort_by = sort_by_expr(expr.clone()).map(Box::new).map(Expr::SortBy);
+        let sort = sort_expr(expr.clone()).map(Box::new).map(Expr::Sort);
         let conditional = conditional_expr(expr.clone())
             .map(Box::new)
             .map(Expr::Conditional);
@@ -45,6 +47,7 @@ pub fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Toke
             unary,
             standalone,
             sort_by,
+            sort,
             conditional,
             cast,
             str,
@@ -167,21 +170,34 @@ fn binary_expr<'a>(
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SortByExpr {
-    pub pairs: Vec<(Expr, bool)>,
+    pub pairs: Vec<(Expr, SortOrder)>,
     pub expr: Expr,
 }
 
 fn sort_by_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], SortByExpr, extra::Err<Rich<'a, Token>>> + Clone {
-    let pair = expr
-        .clone()
-        .then(select_ref! { Token::Literal(Literal::Bool(descending)) => *descending });
+    let pair = expr.clone().then(sort_order());
     just(Token::Stat(StatKeyword::Sort))
         .ignore_then(expr)
         .then_ignore(just(Token::ExprKeyword(ExprKeyword::By)))
         .then(pair.repeated().collect())
         .map(|(expr, pairs)| SortByExpr { pairs, expr })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SortExpr {
+    pub expr: Expr,
+    pub order: SortOrder,
+}
+
+fn sort_expr<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], SortExpr, extra::Err<Rich<'a, Token>>> + Clone {
+    just(Token::ExprKeyword(ExprKeyword::Sort))
+        .ignore_then(sort_order())
+        .then(expr)
+        .map(|(order, expr)| SortExpr { expr, order })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -196,7 +212,6 @@ pub enum UnaryOperator {
     Count,
     First,
     Last,
-    Sort,
     Reverse,
     Mean,
     Median,
@@ -239,8 +254,7 @@ fn unary_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], UnaryExpr, extra::Err<Rich<'a, Token>>> + Clone {
     #[allow(non_snake_case)]
-    let named =
-        choice_named_unary_op!(Sum, Count, First, Last, Sort, Reverse, Mean, Median, Abs, Unique);
+    let named = choice_named_unary_op!(Sum, Count, First, Last, Reverse, Mean, Median, Abs, Unique);
     let neg = select_ref! { Token::Symbol(Symbol::Sub) => UnaryOperator::Neg };
     let not = select_ref! { Token::Symbol(Symbol::Bang) => UnaryOperator::Not };
     let is_null = is!(Token::Literal(Literal::Null) => UnaryOperator::IsNull);

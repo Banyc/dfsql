@@ -307,6 +307,8 @@ impl SqlHelper {
             ("sum", color_functor()),
             ("count", color_functor()),
             ("col_sort", color_functor()),
+            ("asc", color_functor()),
+            ("desc", color_functor()),
             ("col_reverse", color_functor()),
             ("mean", color_functor()),
             ("median", color_functor()),

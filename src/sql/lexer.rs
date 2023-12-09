@@ -133,6 +133,8 @@ pub enum ExprKeyword {
     First,
     Last,
     Sort,
+    Asc,
+    Desc,
     Reverse,
     Mean,
     Median,
@@ -153,6 +155,8 @@ fn expr_keyword<'a>() -> impl Parser<'a, &'a str, ExprKeyword, extra::Err<Rich<'
     let sum = text::keyword("sum").to(ExprKeyword::Sum);
     let count = text::keyword("count").to(ExprKeyword::Count);
     let sort = text::keyword("col_sort").to(ExprKeyword::Sort);
+    let asc = text::keyword("asc").to(ExprKeyword::Asc);
+    let desc = text::keyword("desc").to(ExprKeyword::Desc);
     let reverse = text::keyword("col_reverse").to(ExprKeyword::Sort);
     let first = text::keyword("first").to(ExprKeyword::First);
     let last = text::keyword("last").to(ExprKeyword::Last);
@@ -170,8 +174,8 @@ fn expr_keyword<'a>() -> impl Parser<'a, &'a str, ExprKeyword, extra::Err<Rich<'
     let all = text::keyword("all").to(ExprKeyword::All);
     let any = text::keyword("any").to(ExprKeyword::Any);
     choice((
-        sum, count, sort, reverse, first, last, mean, median, abs, unique, by, is, alias, col,
-        exclude, cast, nan, all, any,
+        sum, count, sort, asc, desc, reverse, first, last, mean, median, abs, unique, by, is,
+        alias, col, exclude, cast, nan, all, any,
     ))
     .boxed()
 }

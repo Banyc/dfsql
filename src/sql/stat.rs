@@ -3,7 +3,7 @@ use chumsky::prelude::*;
 use super::{
     expr::{expr, lax_col_name, Expr},
     lexer::{Literal, StatKeyword, Token},
-    string_token, variable_token, S,
+    sort_order, string_token, variable_token, SortOrder, S,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,12 +105,14 @@ fn limit_stat<'a>() -> impl Parser<'a, &'a [Token], LimitStat, extra::Err<Rich<'
 #[derive(Debug, Clone, PartialEq)]
 pub struct SortStat {
     pub column: String,
+    pub order: SortOrder,
 }
 
 fn sort_stat<'a>() -> impl Parser<'a, &'a [Token], SortStat, extra::Err<Rich<'a, Token>>> + Clone {
     just(Token::Stat(StatKeyword::Sort))
-        .ignore_then(lax_col_name())
-        .map(|column| SortStat { column })
+        .ignore_then(sort_order())
+        .then(lax_col_name())
+        .map(|(order, column)| SortStat { column, order })
         .boxed()
 }
 

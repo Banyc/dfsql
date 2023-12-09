@@ -44,3 +44,17 @@ fn variable_token<'a>() -> impl Parser<'a, &'a [Token], String, extra::Err<Rich<
 {
     select_ref! { Token::Variable(name) => name.clone() }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SortOrder {
+    Asc,
+    Desc,
+}
+
+fn sort_order<'a>() -> impl Parser<'a, &'a [Token], SortOrder, extra::Err<Rich<'a, Token>>> + Clone
+{
+    let empty = empty().to(SortOrder::Asc);
+    let asc = just(Token::ExprKeyword(lexer::ExprKeyword::Asc)).to(SortOrder::Asc);
+    let desc = just(Token::ExprKeyword(lexer::ExprKeyword::Desc)).to(SortOrder::Desc);
+    choice((asc, desc, empty))
+}
