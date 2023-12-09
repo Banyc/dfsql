@@ -35,9 +35,9 @@ pub struct Cli {
     /// Output file storing the modified data frame
     #[clap(short, long)]
     output: Option<PathBuf>,
-    /// Evaluate the data frame for every input line
+    /// Only evaluate the data frame on exit
     #[clap(short, long, default_value_t = false)]
-    eager: bool,
+    lazy: bool,
     /// Set the number of rows to use when inferring the csv schema.
     #[clap(long, default_value_t = 100)]
     infer_schema_length: usize,
@@ -54,7 +54,7 @@ impl Cli {
         }
         let mut handler = LineExecutor::new(df.clone(), others);
         let mut rl = Editor::new()?;
-        if self.eager {
+        if !self.lazy {
             let lines = if let Some(output) = &self.output {
                 let mut output = output.clone();
                 output.set_extension(SQL_EXTENSION);
@@ -107,7 +107,7 @@ impl Cli {
                 Err(_) => break,
             };
         }
-        if !self.eager {
+        if self.lazy {
             self.write_repl_output(df, &handler)?;
         }
         Ok(())
@@ -134,7 +134,7 @@ impl Cli {
                 return Err(());
             }
         };
-        if self.eager {
+        if !self.lazy {
             if let Err(e) = self.write_repl_output(df.clone(), handler) {
                 eprintln!("{e}");
                 // Rollback
