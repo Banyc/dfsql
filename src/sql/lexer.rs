@@ -144,6 +144,7 @@ pub enum ExprKeyword {
     Col,
     Exclude,
     Cast,
+    Nan,
 }
 
 fn expr_keyword<'a>() -> impl Parser<'a, &'a str, ExprKeyword, extra::Err<Rich<'a, char>>> + Clone {
@@ -163,9 +164,10 @@ fn expr_keyword<'a>() -> impl Parser<'a, &'a str, ExprKeyword, extra::Err<Rich<'
     let col = text::keyword("col").to(ExprKeyword::Col);
     let exclude = text::keyword("exclude").to(ExprKeyword::Exclude);
     let cast = text::keyword("cast").to(ExprKeyword::Cast);
+    let nan = text::keyword("nan").to(ExprKeyword::Nan);
     choice((
         sum, count, sort, reverse, first, last, mean, median, abs, unique, by, is, alias, col,
-        exclude, cast,
+        exclude, cast, nan,
     ))
     .boxed()
 }

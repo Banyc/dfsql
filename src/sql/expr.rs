@@ -205,6 +205,7 @@ pub enum UnaryOperator {
     Not,
     Neg,
     IsNull,
+    IsNan,
 }
 
 macro_rules! select_map_named_unary_op {
@@ -224,6 +225,14 @@ macro_rules! choice_named_unary_op {
     };
 }
 
+macro_rules! is {
+    ($token:expr => $op:expr) => {
+        just(Token::ExprKeyword(ExprKeyword::Is))
+            .then(just($token))
+            .to($op)
+    };
+}
+
 fn unary_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], UnaryExpr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -232,10 +241,10 @@ fn unary_expr<'a>(
         choice_named_unary_op!(Sum, Count, First, Last, Sort, Reverse, Mean, Median, Abs, Unique);
     let neg = select_ref! { Token::Symbol(Symbol::Sub) => UnaryOperator::Neg };
     let not = select_ref! { Token::Symbol(Symbol::Bang) => UnaryOperator::Not };
-    let is_null = just(Token::ExprKeyword(ExprKeyword::Is))
-        .ignore_then(just(Token::Literal(Literal::Null)))
-        .to(UnaryOperator::IsNull);
-    let operator = choice((named, neg, not, is_null));
+    let is_null = is!(Token::Literal(Literal::Null) => UnaryOperator::IsNull);
+    let is_nan = is!(Token::ExprKeyword(ExprKeyword::Nan) => UnaryOperator::IsNan);
+    let is = choice((is_null, is_nan));
+    let operator = choice((named, neg, not, is));
 
     operator
         .then(expr)
