@@ -42,12 +42,20 @@ pub struct Cli {
 }
 
 impl Cli {
+    fn infer_schema_length(&self) -> Option<usize> {
+        let lazy = self.sql.is_some() || self.lazy;
+        match lazy {
+            true => Some(self.infer_schema_length),
+            false => None,
+        }
+    }
+
     pub fn run(self) -> anyhow::Result<()> {
-        let mut df = read_df_file(&self.input, self.infer_schema_length)?;
+        let mut df = read_df_file(&self.input, self.infer_schema_length())?;
         let mut others = HashMap::new();
         for other in &self.join {
             let (name, path) = other.split_once(',').context("name,path")?;
-            let df = read_df_file(path, self.infer_schema_length)?;
+            let df = read_df_file(path, self.infer_schema_length())?;
             others.insert(name.to_string(), df);
         }
         if let Some(sql_file) = &self.sql {
@@ -182,7 +190,10 @@ impl Cli {
     }
 }
 
-fn read_df_file(path: impl AsRef<Path>, infer_schema_length: usize) -> anyhow::Result<LazyFrame> {
+fn read_df_file(
+    path: impl AsRef<Path>,
+    infer_schema_length: Option<usize>,
+) -> anyhow::Result<LazyFrame> {
     let Some(extension) = path.as_ref().extension() else {
         bail!(
             "No extension at the name of the file `{}`",
@@ -192,14 +203,14 @@ fn read_df_file(path: impl AsRef<Path>, infer_schema_length: usize) -> anyhow::R
     Ok(match extension.to_string_lossy().as_ref() {
         "csv" => LazyCsvReader::new(&path)
             .has_header(true)
-            .with_infer_schema_length(Some(infer_schema_length))
+            .with_infer_schema_length(infer_schema_length)
             .finish()?,
         "json" => {
             let file = std::fs::File::options().read(true).open(&path)?;
             JsonReader::new(file).finish()?.lazy()
         }
         "ndjson" | "jsonl" => LazyJsonLineReader::new(&path)
-            .with_infer_schema_length(Some(infer_schema_length))
+            .with_infer_schema_length(infer_schema_length)
             .finish()?,
         _ => bail!(
             "Unknown extension `{}` at the name of the file `{}`",
