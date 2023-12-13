@@ -108,6 +108,7 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
                 sql::expr::BinaryOperator::Sub => left - right,
                 sql::expr::BinaryOperator::Mul => left * right,
                 sql::expr::BinaryOperator::Div => left / right,
+                sql::expr::BinaryOperator::Modulo => left % right,
                 sql::expr::BinaryOperator::Eq => left.eq(right),
                 sql::expr::BinaryOperator::NotEq => left.neq(right),
                 sql::expr::BinaryOperator::LtEq => left.lt_eq(right),

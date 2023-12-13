@@ -97,6 +97,7 @@ pub enum Symbol {
     Ampersand,
     Pipe,
     Comma,
+    Percent,
 }
 
 fn symbol<'a>() -> impl Parser<'a, &'a str, Symbol, extra::Err<Rich<'a, char>>> + Clone {
@@ -111,6 +112,7 @@ fn symbol<'a>() -> impl Parser<'a, &'a str, Symbol, extra::Err<Rich<'a, char>>> 
     let pipe = just('|').to(Symbol::Pipe);
     let comma = just(',').to(Symbol::Comma);
     let bang = just('!').to(Symbol::Bang);
+    let percent = just('%').to(Symbol::Percent);
     choice((
         left_angle,
         right_angle,
@@ -123,6 +125,7 @@ fn symbol<'a>() -> impl Parser<'a, &'a str, Symbol, extra::Err<Rich<'a, char>>> 
         pipe,
         comma,
         bang,
+        percent,
     ))
 }
 

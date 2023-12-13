@@ -102,6 +102,7 @@ pub enum BinaryOperator {
     Sub,
     Mul,
     Div,
+    Modulo,
     Eq,
     NotEq,
     LtEq,
@@ -126,7 +127,8 @@ fn term_expr<'a>(
 ) -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
     let mul = just(Token::Symbol(Symbol::Mul)).to(BinaryOperator::Mul);
     let div = just(Token::Symbol(Symbol::Div)).to(BinaryOperator::Div);
-    let operator = choice((mul, div));
+    let modulo = just(Token::Symbol(Symbol::Percent)).to(BinaryOperator::Modulo);
+    let operator = choice((mul, div, modulo));
     binary_expr(operator, expr)
 }
 
