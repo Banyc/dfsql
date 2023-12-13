@@ -54,7 +54,8 @@ pub fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Toke
         ))
         .boxed();
 
-        let term = term_expr(atom);
+        let power = power_expr(atom);
+        let term = term_expr(power);
         let sum = sum_expr(term);
         let cmp = cmp_expr(sum);
         logic_expr(cmp)
@@ -106,6 +107,15 @@ pub enum BinaryOperator {
     Gt,
     And,
     Or,
+    Pow,
+}
+
+fn power_expr<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
+    let pow = just(Token::ExprKeyword(ExprKeyword::Pow)).to(BinaryOperator::Pow);
+    let operator = choice((pow,));
+    binary_expr(operator, expr)
 }
 
 fn term_expr<'a>(

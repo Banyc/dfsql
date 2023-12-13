@@ -401,6 +401,7 @@ impl SqlHelper {
             ("nan", color_functor()),
             ("all", color_functor()),
             ("any", color_functor()),
+            ("pow", color_functor()),
             ("if", color_control_flow()),
             ("then", color_control_flow()),
             ("else", color_control_flow()),

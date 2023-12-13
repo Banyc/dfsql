@@ -154,6 +154,7 @@ pub enum ExprKeyword {
     Nan,
     All,
     Any,
+    Pow,
 }
 
 fn expr_keyword<'a>() -> impl Parser<'a, &'a str, ExprKeyword, extra::Err<Rich<'a, char>>> + Clone {
@@ -183,11 +184,13 @@ fn expr_keyword<'a>() -> impl Parser<'a, &'a str, ExprKeyword, extra::Err<Rich<'
     let nan = text::keyword("nan").to(ExprKeyword::Nan);
     let all = text::keyword("all").to(ExprKeyword::All);
     let any = text::keyword("any").to(ExprKeyword::Any);
-    choice((
+    let pow = text::keyword("pow").to(ExprKeyword::Pow);
+    let a = choice((
         sum, sqrt, count, sort, asc, desc, reverse, first, last, mean, median, max, min, var, std,
         abs, unique, by, is, alias, col, exclude, cast, nan, all, any,
-    ))
-    .boxed()
+    ));
+    let b = choice((pow,));
+    choice((a, b)).boxed()
 }
 
 #[derive(Debug, Clone, PartialEq)]

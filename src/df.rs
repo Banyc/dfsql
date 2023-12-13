@@ -116,6 +116,7 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
                 sql::expr::BinaryOperator::Gt => left.gt(right),
                 sql::expr::BinaryOperator::And => left.and(right),
                 sql::expr::BinaryOperator::Or => left.or(right),
+                sql::expr::BinaryOperator::Pow => left.pow(right),
             }
         }
         sql::expr::Expr::Unary(unary) => {
