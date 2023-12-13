@@ -19,6 +19,7 @@ polars = { version = "0.35.4", features = [
     "json",
     "lazy",
     "lazy_regex",
+    "log",
     "strings",
 ] }
 rustyline = { version = "13.0.0", features = ["derive"] }

@@ -15,6 +15,7 @@ pub enum Expr {
     Alias(Box<AliasExpr>),
     Conditional(Box<ConditionalExpr>),
     Cast(Box<CastExpr>),
+    Log(Box<LogExpr>),
     Str(Box<StrExpr>),
     Standalone(Box<StandaloneExpr>),
     SortBy(Box<SortByExpr>),
@@ -40,6 +41,7 @@ pub fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Toke
             .map(Box::new)
             .map(Expr::Conditional);
         let cast = cast_expr(expr.clone()).map(Box::new).map(Expr::Cast);
+        let log = log_expr(expr.clone()).map(Box::new).map(Expr::Log);
         let str = str_expr(expr.clone()).map(Box::new).map(Expr::Str);
         let atom = choice((
             atom,
@@ -50,6 +52,7 @@ pub fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Toke
             sort,
             conditional,
             cast,
+            log,
             str,
         ))
         .boxed();
@@ -366,6 +369,25 @@ fn cast_expr<'a>(
         .ignore_then(select_ref! { Token::Type(ty) => *ty })
         .then(expr)
         .map(|(ty, expr)| CastExpr { expr, ty })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LogExpr {
+    pub expr: Expr,
+    pub base: f64,
+}
+
+fn log_expr<'a>(
+    expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
+) -> impl Parser<'a, &'a [Token], LogExpr, extra::Err<Rich<'a, Token>>> + Clone {
+    let float = select_ref! { Token::Literal(Literal::Float(float)) => float };
+    let int = select_ref! { Token::Literal(Literal::Int(int)) => int };
+    let base = choice((float, int)).map(|s| s.parse::<f64>().unwrap());
+
+    just(Token::ExprKeyword(ExprKeyword::Log))
+        .ignore_then(base)
+        .then(expr.clone())
+        .map(|(base, expr)| LogExpr { expr, base })
 }
 
 #[derive(Debug, Clone, PartialEq)]
