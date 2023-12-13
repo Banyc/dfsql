@@ -129,6 +129,7 @@ fn symbol<'a>() -> impl Parser<'a, &'a str, Symbol, extra::Err<Rich<'a, char>>> 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ExprKeyword {
     Sum,
+    Sqrt,
     Count,
     First,
     Last,
@@ -138,6 +139,10 @@ pub enum ExprKeyword {
     Reverse,
     Mean,
     Median,
+    Max,
+    Min,
+    Var,
+    Std,
     Abs,
     Unique,
     By,
@@ -153,6 +158,7 @@ pub enum ExprKeyword {
 
 fn expr_keyword<'a>() -> impl Parser<'a, &'a str, ExprKeyword, extra::Err<Rich<'a, char>>> + Clone {
     let sum = text::keyword("sum").to(ExprKeyword::Sum);
+    let sqrt = text::keyword("sqrt").to(ExprKeyword::Sqrt);
     let count = text::keyword("count").to(ExprKeyword::Count);
     let sort = text::keyword("col_sort").to(ExprKeyword::Sort);
     let asc = text::keyword("asc").to(ExprKeyword::Asc);
@@ -162,6 +168,10 @@ fn expr_keyword<'a>() -> impl Parser<'a, &'a str, ExprKeyword, extra::Err<Rich<'
     let last = text::keyword("last").to(ExprKeyword::Last);
     let mean = text::keyword("mean").to(ExprKeyword::Mean);
     let median = text::keyword("median").to(ExprKeyword::Median);
+    let max = text::keyword("max").to(ExprKeyword::Max);
+    let min = text::keyword("min").to(ExprKeyword::Min);
+    let var = text::keyword("var").to(ExprKeyword::Var);
+    let std = text::keyword("std").to(ExprKeyword::Std);
     let abs = text::keyword("abs").to(ExprKeyword::Abs);
     let unique = text::keyword("unique").to(ExprKeyword::Unique);
     let by = text::keyword("by").to(ExprKeyword::By);
@@ -174,8 +184,8 @@ fn expr_keyword<'a>() -> impl Parser<'a, &'a str, ExprKeyword, extra::Err<Rich<'
     let all = text::keyword("all").to(ExprKeyword::All);
     let any = text::keyword("any").to(ExprKeyword::Any);
     choice((
-        sum, count, sort, asc, desc, reverse, first, last, mean, median, abs, unique, by, is,
-        alias, col, exclude, cast, nan, all, any,
+        sum, sqrt, count, sort, asc, desc, reverse, first, last, mean, median, max, min, var, std,
+        abs, unique, by, is, alias, col, exclude, cast, nan, all, any,
     ))
     .boxed()
 }

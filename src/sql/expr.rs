@@ -209,12 +209,17 @@ pub struct UnaryExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOperator {
     Sum,
+    Sqrt,
     Count,
     First,
     Last,
     Reverse,
     Mean,
     Median,
+    Max,
+    Min,
+    Var,
+    Std,
     Abs,
     Unique,
     Not,
@@ -254,7 +259,9 @@ fn unary_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], UnaryExpr, extra::Err<Rich<'a, Token>>> + Clone {
     #[allow(non_snake_case)]
-    let named = choice_named_unary_op!(Sum, Count, First, Last, Reverse, Mean, Median, Abs, Unique);
+    let named = choice_named_unary_op!(
+        Sum, Sqrt, Count, First, Last, Reverse, Mean, Median, Max, Min, Var, Std, Abs, Unique
+    );
     let neg = select_ref! { Token::Symbol(Symbol::Sub) => UnaryOperator::Neg };
     let not = select_ref! { Token::Symbol(Symbol::Bang) => UnaryOperator::Not };
     let is_null = is!(Token::Literal(Literal::Null) => UnaryOperator::IsNull);
