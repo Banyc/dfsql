@@ -607,4 +607,77 @@ mod tests {
             }))
         );
     }
+
+    #[test]
+    fn test_nested_conditional_expr() {
+        let src = r#"(if (if 1.1 then 1.2 if 1.3 then 1.4 else 1.5) then (if 2.1 then 2.2 if 2.3 then 2.4 else 2.5) if (if 3.1 then 3.2 if 3.3 then 3.4 else 3.5) then (if 4.1 then 4.2 if 4.3 then 4.4 else 4.5) else (if 5.1 then 5.2 if 5.3 then 5.4 else 5.5))"#;
+        let lexer = lexer();
+        let tokens = lexer.parse(src).unwrap();
+        let parser = expr();
+        let expr = parser.parse(&tokens).unwrap();
+        assert_eq!(
+            expr,
+            Expr::Conditional(Box::new(ConditionalExpr {
+                first_case: ConditionalCase {
+                    when: Expr::Conditional(Box::new(ConditionalExpr {
+                        first_case: ConditionalCase {
+                            when: Expr::Literal(Literal::Float(String::from("1.1"))),
+                            then: Expr::Literal(Literal::Float(String::from("1.2")))
+                        },
+                        other_cases: vec![ConditionalCase {
+                            when: Expr::Literal(Literal::Float(String::from("1.3"))),
+                            then: Expr::Literal(Literal::Float(String::from("1.4")))
+                        }],
+                        otherwise: Expr::Literal(Literal::Float(String::from("1.5"))),
+                    })),
+                    then: Expr::Conditional(Box::new(ConditionalExpr {
+                        first_case: ConditionalCase {
+                            when: Expr::Literal(Literal::Float(String::from("2.1"))),
+                            then: Expr::Literal(Literal::Float(String::from("2.2")))
+                        },
+                        other_cases: vec![ConditionalCase {
+                            when: Expr::Literal(Literal::Float(String::from("2.3"))),
+                            then: Expr::Literal(Literal::Float(String::from("2.4")))
+                        }],
+                        otherwise: Expr::Literal(Literal::Float(String::from("2.5"))),
+                    })),
+                },
+                other_cases: vec![ConditionalCase {
+                    when: Expr::Conditional(Box::new(ConditionalExpr {
+                        first_case: ConditionalCase {
+                            when: Expr::Literal(Literal::Float(String::from("3.1"))),
+                            then: Expr::Literal(Literal::Float(String::from("3.2")))
+                        },
+                        other_cases: vec![ConditionalCase {
+                            when: Expr::Literal(Literal::Float(String::from("3.3"))),
+                            then: Expr::Literal(Literal::Float(String::from("3.4")))
+                        }],
+                        otherwise: Expr::Literal(Literal::Float(String::from("3.5"))),
+                    })),
+                    then: Expr::Conditional(Box::new(ConditionalExpr {
+                        first_case: ConditionalCase {
+                            when: Expr::Literal(Literal::Float(String::from("4.1"))),
+                            then: Expr::Literal(Literal::Float(String::from("4.2")))
+                        },
+                        other_cases: vec![ConditionalCase {
+                            when: Expr::Literal(Literal::Float(String::from("4.3"))),
+                            then: Expr::Literal(Literal::Float(String::from("4.4")))
+                        }],
+                        otherwise: Expr::Literal(Literal::Float(String::from("4.5"))),
+                    })),
+                }],
+                otherwise: Expr::Conditional(Box::new(ConditionalExpr {
+                    first_case: ConditionalCase {
+                        when: Expr::Literal(Literal::Float(String::from("5.1"))),
+                        then: Expr::Literal(Literal::Float(String::from("5.2")))
+                    },
+                    other_cases: vec![ConditionalCase {
+                        when: Expr::Literal(Literal::Float(String::from("5.3"))),
+                        then: Expr::Literal(Literal::Float(String::from("5.4")))
+                    }],
+                    otherwise: Expr::Literal(Literal::Float(String::from("5.5"))),
+                })),
+            }))
+        );
+    }
 }
