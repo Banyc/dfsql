@@ -80,7 +80,7 @@ impl Cli {
                 vec![]
             };
 
-            self.write_repl_output(df.clone(), &handler)?;
+            self.display_and_write_repl_output(df.clone(), &handler)?;
             for line in lines {
                 println!("> {line}");
                 match self.handle_line(line, df.clone(), &mut handler, &mut rl) {
@@ -108,7 +108,7 @@ impl Cli {
             };
         }
         if self.lazy {
-            self.write_repl_output(df, &handler)?;
+            self.display_and_write_repl_output(df, &handler)?;
         }
         Ok(())
     }
@@ -148,7 +148,7 @@ impl Cli {
             }
         };
         if !self.lazy {
-            if let Err(e) = self.write_repl_output(df.clone(), handler) {
+            if let Err(e) = self.display_and_write_repl_output(df.clone(), handler) {
                 eprintln!("{e}");
                 // Rollback
                 let df = match handler.handle_line(df, String::from("undo")) {
@@ -161,7 +161,11 @@ impl Cli {
         Ok(df)
     }
 
-    fn write_repl_output(&self, df: LazyFrame, handler: &LineExecutor) -> anyhow::Result<()> {
+    fn display_and_write_repl_output(
+        &self,
+        df: LazyFrame,
+        handler: &LineExecutor,
+    ) -> anyhow::Result<()> {
         let df = df.collect()?;
         println!("{df}");
         if let Some(output) = &self.output {
