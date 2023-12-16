@@ -1,13 +1,11 @@
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    io::{BufRead, BufReader, Read, Write},
-    path::{Path, PathBuf},
-};
+use std::{borrow::Cow, collections::HashMap, path::PathBuf};
 
 use anyhow::{bail, Context};
 use clap::Parser;
-use dfsql::{df::apply, sql};
+use dfsql::{
+    df::apply,
+    io::{read_df_file, read_repl_sql_file, read_sql_file, write_df_output, write_repl_sql_output},
+};
 use fancy_regex::Regex;
 use handler::{HandleLineResult, LineExecutor};
 use polars::prelude::*;
@@ -66,13 +64,7 @@ impl Cli {
                 );
             }
 
-            let mut file = std::fs::File::options().read(true).open(sql_file)?;
-            let mut src = String::new();
-            file.read_to_string(&mut src)?;
-            drop(file);
-            let Some(s) = sql::parse(&src) else {
-                return Ok(());
-            };
+            let s = read_sql_file(sql_file)?;
             let df = apply(df, &s, &others)?.collect()?;
             match &self.output {
                 Some(output) => write_df_output(df, output)?,
@@ -86,24 +78,7 @@ impl Cli {
             let lines = if let Some(output) = &self.output {
                 let mut output = output.clone();
                 output.set_extension(SQL_EXTENSION);
-                if let Ok(file) = std::fs::File::options().read(true).open(output) {
-                    let mut reader = BufReader::new(file);
-                    let mut lines = vec![];
-                    loop {
-                        let mut line = String::new();
-                        if reader.read_line(&mut line)? == 0 {
-                            // EOF
-                            break;
-                        }
-                        if line.ends_with('\n') {
-                            line.pop();
-                        }
-                        lines.push(line);
-                    }
-                    lines
-                } else {
-                    vec![]
-                }
+                read_repl_sql_file(&output).ok().unwrap_or_default()
             } else {
                 vec![]
             };
@@ -184,40 +159,10 @@ impl Cli {
 
             let mut output = output.clone();
             output.set_extension(SQL_EXTENSION);
-            write_sql_output(handler.history().iter(), output)?;
+            write_repl_sql_output(handler.history().iter(), output)?;
         }
         Ok(())
     }
-}
-
-fn read_df_file(
-    path: impl AsRef<Path>,
-    infer_schema_length: Option<usize>,
-) -> anyhow::Result<LazyFrame> {
-    let Some(extension) = path.as_ref().extension() else {
-        bail!(
-            "No extension at the name of the file `{}`",
-            path.as_ref().to_string_lossy()
-        );
-    };
-    Ok(match extension.to_string_lossy().as_ref() {
-        "csv" => LazyCsvReader::new(&path)
-            .has_header(true)
-            .with_infer_schema_length(infer_schema_length)
-            .finish()?,
-        "json" => {
-            let file = std::fs::File::options().read(true).open(&path)?;
-            JsonReader::new(file).finish()?.lazy()
-        }
-        "ndjson" | "jsonl" => LazyJsonLineReader::new(&path)
-            .with_infer_schema_length(infer_schema_length)
-            .finish()?,
-        _ => bail!(
-            "Unknown extension `{}` at the name of the file `{}`",
-            extension.to_string_lossy(),
-            path.as_ref().to_string_lossy()
-        ),
-    })
 }
 
 pub mod handler {
@@ -302,52 +247,6 @@ pub mod handler {
         }
         Ok(df)
     }
-}
-
-fn write_df_output(mut df: DataFrame, path: impl AsRef<Path>) -> anyhow::Result<()> {
-    let Some(extension) = path.as_ref().extension() else {
-        bail!(
-            "No extension at the name of the file `{}`",
-            path.as_ref().to_string_lossy()
-        );
-    };
-    let _ = std::fs::remove_file(&path);
-    let output = std::fs::File::options()
-        .write(true)
-        .create(true)
-        .open(&path)?;
-    match extension.to_string_lossy().as_ref() {
-        "csv" => CsvWriter::new(output).finish(&mut df)?,
-        "json" => JsonWriter::new(output).finish(&mut df)?,
-        "ndjson" | "jsonl" => {
-            bail!(
-                "No `JsonLineWriter` available to write `{}`",
-                path.as_ref().to_string_lossy()
-            );
-        }
-        _ => bail!(
-            "Unknown extension `{}` at the name of the file `{}`",
-            extension.to_string_lossy(),
-            path.as_ref().to_string_lossy()
-        ),
-    }
-    Ok(())
-}
-
-fn write_sql_output<'a>(
-    sql: impl Iterator<Item = &'a String>,
-    path: impl AsRef<Path>,
-) -> anyhow::Result<()> {
-    let _ = std::fs::remove_file(&path);
-    let mut output = std::fs::File::options()
-        .write(true)
-        .create(true)
-        .open(path)?;
-    for s in sql {
-        output.write_all(s.as_bytes())?;
-        output.write_all("\n".as_bytes())?;
-    }
-    Ok(())
 }
 
 #[derive(Debug, Helper, Completer, Hinter, Validator)]
