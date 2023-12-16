@@ -129,6 +129,19 @@ impl Cli {
                 println!("{schema:?}");
                 return Ok(df);
             }
+            Ok(HandleLineResult::Save(output)) => {
+                let collected = match df.clone().collect() {
+                    Ok(df) => df,
+                    Err(e) => {
+                        eprintln!("{e}");
+                        return Ok(df);
+                    }
+                };
+                if let Err(e) = write_repl_output(collected, handler, output) {
+                    eprintln!("{e}");
+                };
+                return Ok(df);
+            }
             Err(e) => {
                 eprintln!("{e}");
                 return Err(());
@@ -152,12 +165,21 @@ impl Cli {
         let df = df.collect()?;
         println!("{df}");
         if let Some(output) = &self.output {
-            write_df_output(df.clone(), output)?;
-
-            let mut output = output.clone();
-            output.set_extension(SQL_EXTENSION);
-            write_repl_sql_output(handler.history().iter(), output)?;
+            write_repl_output(df, handler, output.clone())?;
         }
         Ok(())
     }
+}
+
+fn write_repl_output(
+    df: DataFrame,
+    handler: &LineExecutor,
+    mut path: PathBuf,
+) -> anyhow::Result<()> {
+    write_df_output(df.clone(), &path)?;
+
+    path.set_extension(SQL_EXTENSION);
+    write_repl_sql_output(handler.history().iter(), path)?;
+
+    Ok(())
 }

@@ -1,9 +1,10 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 use crate::{
     df::{apply, ApplyStatError},
     sql,
 };
+use anyhow::Context;
 use polars::{lazy::frame::LazyFrame, prelude::SchemaRef};
 
 pub struct LineExecutor {
@@ -42,6 +43,11 @@ impl LineExecutor {
             let schema = df.schema()?;
             return Ok(HandleLineResult::Schema(schema));
         }
+        if trimmed_line.starts_with("save") {
+            let path = trimmed_line.split_once(' ').context("save <PATH>")?.1;
+            let path = PathBuf::from(path);
+            return Ok(HandleLineResult::Save(path));
+        }
         let Some(sql) = sql::parse(&line) else {
             return Ok(HandleLineResult::Continue);
         };
@@ -62,6 +68,7 @@ pub enum HandleLineResult {
     Updated(LazyFrame),
     Continue,
     Schema(SchemaRef),
+    Save(PathBuf),
 }
 
 fn apply_history(

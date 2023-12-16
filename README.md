@@ -19,20 +19,24 @@ dfsql -i your.csv -o a-new.csv
 ## REPL
 
 - `exit`/`quit`: exit the REPL loop.
-  ```py
+  ```bash
   exit
   ```
 - `undo`: undo the previous successful operation.
-  ```py
+  ```bash
   undo
   ```
 - `reset`: reset all the changes and go back to the original data frame.
-  ```py
+  ```bash
   reset
   ```
 - `schema`: show column names and types of the data frame.
-  ```sql
+  ```bash
   schema
+  ```
+- `save`: save the current data frame to a file.
+  ```bash
+  save a-new.csv
   ```
 
 ## Statements
