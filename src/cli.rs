@@ -2,14 +2,14 @@ use std::{collections::HashMap, path::PathBuf};
 
 use crate::{
     df::apply,
-    handler::{HandleLineResult, LineExecutor},
+    handler::LineExecutor,
     io::{read_df_file, read_repl_sql_file, read_sql_file, write_df_output, write_repl_sql_output},
     visual::SqlHelper,
 };
 use anyhow::{bail, Context};
 use clap::Parser;
 use polars::prelude::*;
-use rustyline::{error::ReadlineError, history::History, Editor, Helper};
+use rustyline::{error::ReadlineError, Editor};
 
 const SQL_EXTENSION: &str = "dfsql";
 
@@ -83,9 +83,13 @@ impl Cli {
             self.display_and_write_repl_output(df.clone(), &handler)?;
             for line in lines {
                 println!("> {line}");
-                match self.handle_line(line, df.clone(), &mut handler, &mut rl) {
+                let _ = rl.add_history_entry(&line);
+                match handler.execute(df.clone(), line) {
                     Ok(new) => df = new,
-                    Err(_) => break,
+                    Err(e) => {
+                        eprintln!("{e}");
+                        break;
+                    }
                 };
             }
         }
@@ -102,63 +106,54 @@ impl Cli {
                     break;
                 }
             };
-            match self.handle_line(line, df.clone(), &mut handler, &mut rl) {
+            if line.trim() == "exit" || line.trim() == "quit" {
+                break;
+            }
+            let _ = rl.add_history_entry(&line);
+
+            if line.trim() == "schema" {
+                match df.schema() {
+                    Ok(schema) => println!("{schema:?}"),
+                    Err(e) => eprintln!("{e}"),
+                }
+                continue;
+            }
+            if line.trim().starts_with("save") {
+                let path = line
+                    .trim()
+                    .split_once(' ')
+                    .and_then(|(cmd, path)| match cmd {
+                        "save" => Some(path),
+                        _ => None,
+                    });
+                let Some(path) = path else {
+                    eprintln!("save <PATH>");
+                    continue;
+                };
+                if let Err(e) = save(df.clone(), &handler, path) {
+                    eprintln!("{e}");
+                }
+                continue;
+            }
+            match upgrade_df(line, df.clone(), &mut handler) {
                 Ok(new) => df = new,
-                Err(_) => break,
+                Err(e) => {
+                    eprintln!("{e}");
+                    continue;
+                }
             };
+            if !self.lazy {
+                if let Err(e) = self.display_and_write_repl_output(df.clone(), &handler) {
+                    eprintln!("{e}");
+                    // Rollback
+                    df = handler.undo().unwrap();
+                }
+            }
         }
         if self.lazy {
             self.display_and_write_repl_output(df, &handler)?;
         }
         Ok(())
-    }
-
-    fn handle_line<H: Helper, I: History>(
-        &self,
-        line: String,
-        df: LazyFrame,
-        handler: &mut LineExecutor,
-        rl: &mut Editor<H, I>,
-    ) -> Result<LazyFrame, ()> {
-        let _ = rl.add_history_entry(&line);
-        let df = match handler.handle_line(df.clone(), line) {
-            Ok(HandleLineResult::Exit) => return Err(()),
-            Ok(HandleLineResult::Updated(new)) => new,
-            Ok(HandleLineResult::Continue) => return Ok(df),
-            Ok(HandleLineResult::Schema(schema)) => {
-                println!("{schema:?}");
-                return Ok(df);
-            }
-            Ok(HandleLineResult::Save(output)) => {
-                let collected = match df.clone().collect() {
-                    Ok(df) => df,
-                    Err(e) => {
-                        eprintln!("{e}");
-                        return Ok(df);
-                    }
-                };
-                if let Err(e) = write_repl_output(collected, handler, output) {
-                    eprintln!("{e}");
-                };
-                return Ok(df);
-            }
-            Err(e) => {
-                eprintln!("{e}");
-                return Err(());
-            }
-        };
-        if !self.lazy {
-            if let Err(e) = self.display_and_write_repl_output(df.clone(), handler) {
-                eprintln!("{e}");
-                // Rollback
-                let df = match handler.handle_line(df, String::from("undo")) {
-                    Ok(HandleLineResult::Updated(new)) => new,
-                    _ => panic!(),
-                };
-                return Ok(df);
-            }
-        }
-        Ok(df)
     }
 
     fn display_and_write_repl_output(
@@ -173,6 +168,27 @@ impl Cli {
         }
         Ok(())
     }
+}
+
+fn upgrade_df(
+    line: String,
+    df: LazyFrame,
+    handler: &mut LineExecutor,
+) -> anyhow::Result<LazyFrame> {
+    if line.trim() == "undo" {
+        return handler.undo();
+    }
+    if line.trim() == "reset" {
+        return Ok(handler.reset());
+    }
+    handler.execute(df, line)
+}
+
+fn save(df: LazyFrame, handler: &LineExecutor, path: &str) -> anyhow::Result<()> {
+    let path = PathBuf::from(path);
+    let collected = df.collect()?;
+    write_repl_output(collected, handler, path)?;
+    Ok(())
 }
 
 fn write_repl_output(

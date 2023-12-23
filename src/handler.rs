@@ -1,11 +1,11 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
 
 use crate::{
     df::{apply, ApplyStatError},
     sql,
 };
-use anyhow::Context;
-use polars::{lazy::frame::LazyFrame, prelude::SchemaRef};
+use anyhow::bail;
+use polars::lazy::frame::LazyFrame;
 
 pub struct LineExecutor {
     history: Vec<String>,
@@ -22,53 +22,32 @@ impl LineExecutor {
         }
     }
 
-    pub fn handle_line(&mut self, df: LazyFrame, line: String) -> anyhow::Result<HandleLineResult> {
-        let trimmed_line = line.trim();
-        if trimmed_line == "exit" || trimmed_line == "quit" {
-            return Ok(HandleLineResult::Exit);
-        }
-        if trimmed_line == "undo" || trimmed_line == "reset" {
-            self.history.pop();
-            if trimmed_line == "reset" {
-                self.history.clear();
-            }
-            if self.history.is_empty() {
-                return Ok(HandleLineResult::Updated(self.original_df.clone()));
-            }
-            let sql = self.history.iter().map(|s| sql::parse(s).unwrap());
-            let df = apply_history(self.original_df.clone(), sql, &self.others)?;
-            return Ok(HandleLineResult::Updated(df));
-        }
-        if trimmed_line == "schema" {
-            let schema = df.schema()?;
-            return Ok(HandleLineResult::Schema(schema));
-        }
-        if trimmed_line.starts_with("save") {
-            let path = trimmed_line.split_once(' ').context("save <PATH>")?.1;
-            let path = PathBuf::from(path);
-            return Ok(HandleLineResult::Save(path));
-        }
+    pub fn reset(&mut self) -> LazyFrame {
+        self.history.clear();
+        self.original_df.clone()
+    }
+
+    pub fn undo(&mut self) -> anyhow::Result<LazyFrame> {
+        self.history.pop();
+        let sql = self.history.iter().map(|s| sql::parse(s).unwrap());
+        let df = apply_history(self.original_df.clone(), sql, &self.others)?;
+        Ok(df)
+    }
+
+    pub fn execute(&mut self, df: LazyFrame, line: String) -> anyhow::Result<LazyFrame> {
         let Some(sql) = sql::parse(&line) else {
-            return Ok(HandleLineResult::Continue);
+            bail!("Failed to parse SQL");
         };
         let df = apply(df, &sql, &self.others)?;
-        if !trimmed_line.is_empty() {
+        if !line.trim().is_empty() {
             self.history.push(line);
         }
-        Ok(HandleLineResult::Updated(df))
+        Ok(df)
     }
 
     pub fn history(&self) -> &Vec<String> {
         &self.history
     }
-}
-
-pub enum HandleLineResult {
-    Exit,
-    Updated(LazyFrame),
-    Continue,
-    Schema(SchemaRef),
-    Save(PathBuf),
 }
 
 fn apply_history(
