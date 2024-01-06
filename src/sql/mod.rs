@@ -11,23 +11,17 @@ pub mod stat;
 
 pub fn parse(src: &str) -> Option<S> {
     let lexer = lexer();
-    let Some(tokens) = lexer
+    let tokens = lexer
         .parse(src)
         .into_result()
-        .map_err(|e| eprint!("{e:?}"))
-        .ok()
-    else {
-        return None;
-    };
+        .map_err(|e| eprintln!("{e:?}"))
+        .ok()?;
     let parser = parser();
-    let Some(ast) = parser
+    let ast = parser
         .parse(&tokens)
         .into_result()
         .map_err(|e| eprintln!("{e:?}"))
-        .ok()
-    else {
-        return None;
-    };
+        .ok()?;
     Some(ast)
 }
 
