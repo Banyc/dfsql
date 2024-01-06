@@ -53,7 +53,6 @@ pub enum StatKeyword {
     Limit,
     Reverse,
     Sort,
-    Describe,
     Join,
     On,
     Left,
@@ -70,7 +69,6 @@ fn stat_keyword<'a>() -> impl Parser<'a, &'a str, StatKeyword, extra::Err<Rich<'
     let limit = text::keyword("limit").to(StatKeyword::Limit);
     let reverse = text::keyword("reverse").to(StatKeyword::Reverse);
     let sort = text::keyword("sort").to(StatKeyword::Sort);
-    let describe = text::keyword("describe").to(StatKeyword::Describe);
     let join = text::keyword("join").to(StatKeyword::Join);
     let on = text::keyword("on").to(StatKeyword::On);
     let outer = text::keyword("outer").to(StatKeyword::Outer);
@@ -79,7 +77,7 @@ fn stat_keyword<'a>() -> impl Parser<'a, &'a str, StatKeyword, extra::Err<Rich<'
     let right = text::keyword("right").to(StatKeyword::Right);
     let join_type = choice((outer, inner, left, right));
     choice((
-        select, group_by, agg, filter, limit, reverse, sort, describe, join, on, join_type,
+        select, group_by, agg, filter, limit, reverse, sort, join, on, join_type,
     ))
     .boxed()
 }

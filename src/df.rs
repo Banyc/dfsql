@@ -48,12 +48,6 @@ fn apply_stat(
             };
             df.sort(&sort.column, options)
         }
-        sql::stat::Stat::Describe => {
-            let old = df.clone();
-            let df = old.clone().collect()?;
-            let df = df.describe(None).unwrap();
-            df.lazy()
-        }
         sql::stat::Stat::Join(join) => match join {
             sql::stat::JoinStat::SingleCol(join) => {
                 let other = others
@@ -190,7 +184,7 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
         }
         sql::expr::Expr::Cast(cast) => {
             let ty = match cast.ty {
-                sql::lexer::Type::Str => DataType::Utf8,
+                sql::lexer::Type::Str => DataType::String,
                 sql::lexer::Type::Int => DataType::Int64,
                 sql::lexer::Type::Float => DataType::Float64,
             };

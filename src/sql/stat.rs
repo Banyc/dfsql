@@ -14,7 +14,6 @@ pub enum Stat {
     Limit(LimitStat),
     Reverse,
     Sort(SortStat),
-    Describe,
     Join(JoinStat),
 }
 
@@ -25,11 +24,8 @@ pub fn parser<'a>() -> impl Parser<'a, &'a [Token], S, extra::Err<Rich<'a, Token
     let limit = limit_stat().map(Stat::Limit);
     let reverse = just(Token::Stat(StatKeyword::Reverse)).to(Stat::Reverse);
     let sort = sort_stat().map(Stat::Sort);
-    let describe = just(Token::Stat(StatKeyword::Describe)).to(Stat::Describe);
     let join = join_stat().map(Stat::Join);
-    let stat = choice((
-        select, group_agg, filter, limit, reverse, sort, describe, join,
-    ));
+    let stat = choice((select, group_agg, filter, limit, reverse, sort, join));
 
     stat.repeated()
         .collect()
