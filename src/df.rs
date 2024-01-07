@@ -41,6 +41,9 @@ impl DfExecutor {
         let mut df = self.df().clone();
         for stat in &s.statements {
             df = apply_stat(df, stat, &self.input)?;
+            if let sql::stat::Stat::Use(r#use) = stat {
+                self.df_name = r#use.df_name.clone();
+            }
         }
         *self.input.get_mut(&self.df_name).unwrap() = df;
         Ok(())
@@ -102,6 +105,13 @@ fn apply_stat(
                 }
             }
         },
+        sql::stat::Stat::Use(r#use) => {
+            let df_name = &r#use.df_name;
+            others
+                .get(df_name)
+                .ok_or_else(|| ApplyStatError::DfNotExists(df_name.clone()))?
+                .clone()
+        }
     })
 }
 

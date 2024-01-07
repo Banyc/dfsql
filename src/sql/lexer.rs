@@ -13,7 +13,6 @@ pub enum Token {
     Literal(Literal),
     Symbol(Symbol),
 }
-
 pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>>> + Clone {
     recursive(|tokens| {
         let parens = tokens
@@ -59,8 +58,8 @@ pub enum StatKeyword {
     Right,
     Inner,
     Outer,
+    Use,
 }
-
 fn stat_keyword<'a>() -> impl Parser<'a, &'a str, StatKeyword, extra::Err<Rich<'a, char>>> + Clone {
     let select = text::keyword("select").to(StatKeyword::Select);
     let group_by = text::keyword("group").to(StatKeyword::GroupBy);
@@ -75,9 +74,10 @@ fn stat_keyword<'a>() -> impl Parser<'a, &'a str, StatKeyword, extra::Err<Rich<'
     let inner = text::keyword("inner").to(StatKeyword::Inner);
     let left = text::keyword("left").to(StatKeyword::Left);
     let right = text::keyword("right").to(StatKeyword::Right);
+    let r#use = text::keyword("use").to(StatKeyword::Use);
     let join_type = choice((outer, inner, left, right));
     choice((
-        select, group_by, agg, filter, limit, reverse, sort, join, on, join_type,
+        select, group_by, agg, filter, limit, reverse, sort, join, on, join_type, r#use,
     ))
     .boxed()
 }
@@ -97,7 +97,6 @@ pub enum Symbol {
     Comma,
     Percent,
 }
-
 fn symbol<'a>() -> impl Parser<'a, &'a str, Symbol, extra::Err<Rich<'a, char>>> + Clone {
     let left_angle = just('<').to(Symbol::LeftAngle);
     let right_angle = just('>').to(Symbol::RightAngle);
@@ -158,7 +157,6 @@ pub enum ExprKeyword {
     Pow,
     Log,
 }
-
 fn expr_keyword<'a>() -> impl Parser<'a, &'a str, ExprKeyword, extra::Err<Rich<'a, char>>> + Clone {
     let sum = text::keyword("sum").to(ExprKeyword::Sum);
     let sqrt = text::keyword("sqrt").to(ExprKeyword::Sqrt);
@@ -204,7 +202,6 @@ pub enum Literal {
     Bool(bool),
     Null,
 }
-
 fn literal<'a>() -> impl Parser<'a, &'a str, Literal, extra::Err<Rich<'a, char>>> + Clone {
     let pos_float = text::digits(10)
         .then(just('.').then(text::digits(10)))
@@ -229,7 +226,6 @@ pub enum Type {
     Int,
     Float,
 }
-
 fn type_keyword<'a>() -> impl Parser<'a, &'a str, Type, extra::Err<Rich<'a, char>>> + Clone {
     let str = text::keyword("str").to(Type::Str);
     let int = text::keyword("int").to(Type::Int);
@@ -243,7 +239,6 @@ pub enum Conditional {
     Then,
     Else,
 }
-
 fn conditional<'a>() -> impl Parser<'a, &'a str, Conditional, extra::Err<Rich<'a, char>>> + Clone {
     let when = text::keyword("if").to(Conditional::If);
     let then = text::keyword("then").to(Conditional::Then);
@@ -258,7 +253,6 @@ pub enum StringKeyword {
     All,
     Split,
 }
-
 fn string_functor<'a>(
 ) -> impl Parser<'a, &'a str, StringKeyword, extra::Err<Rich<'a, char>>> + Clone {
     let contains = text::keyword("contains").to(StringKeyword::Contains);

@@ -21,7 +21,6 @@ pub enum Expr {
     SortBy(Box<SortByExpr>),
     Sort(Box<SortExpr>),
 }
-
 pub fn expr<'a>() -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
     recursive(|expr| {
         let parens = expr
@@ -81,7 +80,6 @@ fn col_expr<'a>() -> impl Parser<'a, &'a [Token], String, extra::Err<Rich<'a, To
 pub struct ExcludeExpr {
     pub columns: Vec<String>,
 }
-
 fn exclude_expr<'a>(
 ) -> impl Parser<'a, &'a [Token], ExcludeExpr, extra::Err<Rich<'a, Token>>> + Clone {
     just(Token::ExprKeyword(ExprKeyword::Exclude))
@@ -95,7 +93,6 @@ pub struct BinaryExpr {
     pub left: Expr,
     pub right: Expr,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinaryOperator {
     Add,
@@ -113,7 +110,6 @@ pub enum BinaryOperator {
     Or,
     Pow,
 }
-
 fn power_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -121,7 +117,6 @@ fn power_expr<'a>(
     let operator = choice((pow,));
     binary_expr(operator, expr)
 }
-
 fn term_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -131,7 +126,6 @@ fn term_expr<'a>(
     let operator = choice((mul, div, modulo));
     binary_expr(operator, expr)
 }
-
 fn sum_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -140,7 +134,6 @@ fn sum_expr<'a>(
     let operator = choice((add, sub));
     binary_expr(operator, expr)
 }
-
 fn cmp_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -159,7 +152,6 @@ fn cmp_expr<'a>(
     let operator = choice((eq, not_eq, lt_eq, lt, gt_eq, gt));
     binary_expr(operator, expr)
 }
-
 fn logic_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -168,7 +160,6 @@ fn logic_expr<'a>(
     let operator = choice((and, or));
     binary_expr(operator, expr)
 }
-
 fn binary_expr<'a>(
     operator: impl Parser<'a, &'a [Token], BinaryOperator, extra::Err<Rich<'a, Token>>> + Clone,
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
@@ -188,7 +179,6 @@ pub struct SortByExpr {
     pub pairs: Vec<(Expr, SortOrder)>,
     pub expr: Expr,
 }
-
 fn sort_by_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], SortByExpr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -205,7 +195,6 @@ pub struct SortExpr {
     pub expr: Expr,
     pub order: SortOrder,
 }
-
 fn sort_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], SortExpr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -220,7 +209,6 @@ pub struct UnaryExpr {
     pub operator: UnaryOperator,
     pub expr: Expr,
 }
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOperator {
     Sum,
@@ -244,13 +232,11 @@ pub enum UnaryOperator {
     All,
     Any,
 }
-
 macro_rules! select_map_named_unary_op {
     ($name:ident) => {
         select_ref! { Token::ExprKeyword(ExprKeyword::$name) => UnaryOperator::$name }
     };
 }
-
 macro_rules! choice_named_unary_op {
     ($($name:ident),*) => {
         {
@@ -261,7 +247,6 @@ macro_rules! choice_named_unary_op {
         }
     };
 }
-
 macro_rules! is {
     ($token:expr => $op:expr) => {
         just(Token::ExprKeyword(ExprKeyword::Is))
@@ -269,7 +254,6 @@ macro_rules! is {
             .to($op)
     };
 }
-
 fn unary_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], UnaryExpr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -295,12 +279,10 @@ fn unary_expr<'a>(
 pub struct StandaloneExpr {
     pub operator: StandaloneOperator,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StandaloneOperator {
     Count,
 }
-
 fn standalone_expr<'a>(
 ) -> impl Parser<'a, &'a [Token], StandaloneExpr, extra::Err<Rich<'a, Token>>> + Clone {
     let count = select_ref! { Token::ExprKeyword(ExprKeyword::Count) => StandaloneOperator::Count };
@@ -313,7 +295,6 @@ pub struct AliasExpr {
     pub name: String,
     pub expr: Expr,
 }
-
 fn alias_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], AliasExpr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -330,13 +311,11 @@ pub struct ConditionalExpr {
     pub other_cases: Vec<ConditionalCase>,
     pub otherwise: Expr,
 }
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConditionalCase {
     pub when: Expr,
     pub then: Expr,
 }
-
 fn conditional_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], ConditionalExpr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -363,7 +342,6 @@ pub struct CastExpr {
     pub expr: Expr,
     pub ty: Type,
 }
-
 fn cast_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], CastExpr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -378,7 +356,6 @@ pub struct LogExpr {
     pub expr: Expr,
     pub base: f64,
 }
-
 fn log_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], LogExpr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -399,7 +376,6 @@ pub enum StrExpr {
     ExtractAll(ExtractAll),
     Split(Split),
 }
-
 fn str_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], StrExpr, extra::Err<Rich<'a, Token>>> + Clone {
@@ -415,7 +391,6 @@ pub struct Contains {
     pub str: Expr,
     pub pattern: Expr,
 }
-
 fn contains<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Contains, extra::Err<Rich<'a, Token>>> + Clone {
@@ -431,7 +406,6 @@ pub struct Extract {
     pub pattern: String,
     pub group: usize,
 }
-
 fn extract<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Extract, extra::Err<Rich<'a, Token>>> + Clone {
@@ -453,7 +427,6 @@ pub struct ExtractAll {
     pub str: Expr,
     pub pattern: Expr,
 }
-
 fn extract_all<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], ExtractAll, extra::Err<Rich<'a, Token>>> + Clone {
@@ -469,7 +442,6 @@ pub struct Split {
     pub str: Expr,
     pub pattern: Expr,
 }
-
 fn split<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], Split, extra::Err<Rich<'a, Token>>> + Clone {

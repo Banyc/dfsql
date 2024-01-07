@@ -82,6 +82,14 @@ dfsql -i your.csv -o a-new.csv
   ```sql
   sort icpsr_id
   ```
+- `use`
+  ```py
+  use <var>
+  ```
+  ```py
+  use your
+  ```
+  - Switch to the data frame called `your`.
 
 ## Expressions
 

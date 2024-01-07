@@ -52,7 +52,6 @@ pub enum SortOrder {
     Asc,
     Desc,
 }
-
 fn sort_order<'a>() -> impl Parser<'a, &'a [Token], SortOrder, extra::Err<Rich<'a, Token>>> + Clone
 {
     let empty = empty().to(SortOrder::Asc);

@@ -24,6 +24,7 @@ impl SqlHelper {
             ("right", color_keyword()),
             ("inner", color_keyword()),
             ("outer", color_keyword()),
+            ("use", color_keyword()),
             ("abs", color_functor()),
             ("sum", color_functor()),
             ("sqrt", color_functor()),

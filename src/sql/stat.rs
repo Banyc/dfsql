@@ -15,6 +15,7 @@ pub enum Stat {
     Reverse,
     Sort(SortStat),
     Join(JoinStat),
+    Use(UseStat),
 }
 
 pub fn parser<'a>() -> impl Parser<'a, &'a [Token], S, extra::Err<Rich<'a, Token>>> + Clone {
@@ -25,7 +26,8 @@ pub fn parser<'a>() -> impl Parser<'a, &'a [Token], S, extra::Err<Rich<'a, Token
     let reverse = just(Token::Stat(StatKeyword::Reverse)).to(Stat::Reverse);
     let sort = sort_stat().map(Stat::Sort);
     let join = join_stat().map(Stat::Join);
-    let stat = choice((select, group_agg, filter, limit, reverse, sort, join));
+    let r#use = use_stat().map(Stat::Use);
+    let stat = choice((select, group_agg, filter, limit, reverse, sort, join, r#use));
 
     stat.repeated()
         .collect()
@@ -37,7 +39,6 @@ pub fn parser<'a>() -> impl Parser<'a, &'a [Token], S, extra::Err<Rich<'a, Token
 pub struct SelectStat {
     pub columns: Vec<Expr>,
 }
-
 fn select_stat<'a>() -> impl Parser<'a, &'a [Token], SelectStat, extra::Err<Rich<'a, Token>>> + Clone
 {
     just(Token::Stat(StatKeyword::Select))
@@ -51,7 +52,6 @@ pub struct GroupAggStat {
     pub group_by: Vec<String>,
     pub agg: Vec<Expr>,
 }
-
 fn group_agg_stat<'a>(
 ) -> impl Parser<'a, &'a [Token], GroupAggStat, extra::Err<Rich<'a, Token>>> + Clone {
     // let columns =
@@ -76,7 +76,6 @@ fn column_names<'a>(
 pub struct FilterStat {
     pub condition: Expr,
 }
-
 fn filter_stat<'a>() -> impl Parser<'a, &'a [Token], FilterStat, extra::Err<Rich<'a, Token>>> + Clone
 {
     just(Token::Stat(StatKeyword::Filter))
@@ -89,7 +88,6 @@ fn filter_stat<'a>() -> impl Parser<'a, &'a [Token], FilterStat, extra::Err<Rich
 pub struct LimitStat {
     pub rows: String,
 }
-
 fn limit_stat<'a>() -> impl Parser<'a, &'a [Token], LimitStat, extra::Err<Rich<'a, Token>>> + Clone
 {
     just(Token::Stat(StatKeyword::Limit))
@@ -103,7 +101,6 @@ pub struct SortStat {
     pub column: String,
     pub order: SortOrder,
 }
-
 fn sort_stat<'a>() -> impl Parser<'a, &'a [Token], SortStat, extra::Err<Rich<'a, Token>>> + Clone {
     just(Token::Stat(StatKeyword::Sort))
         .ignore_then(sort_order())
@@ -116,7 +113,6 @@ fn sort_stat<'a>() -> impl Parser<'a, &'a [Token], SortStat, extra::Err<Rich<'a,
 pub enum JoinStat {
     SingleCol(SingleColJoinStat),
 }
-
 fn join_stat<'a>() -> impl Parser<'a, &'a [Token], JoinStat, extra::Err<Rich<'a, Token>>> + Clone {
     let single_col = single_col_join_stat().map(JoinStat::SingleCol);
     choice((single_col,)).boxed()
@@ -131,7 +127,6 @@ pub struct SingleColJoinStat {
     pub left_on: Expr,
     pub right_on: Option<Expr>,
 }
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SingleColJoinType {
     Left,
@@ -139,7 +134,6 @@ pub enum SingleColJoinType {
     Inner,
     Outer,
 }
-
 fn single_col_join_stat<'a>(
 ) -> impl Parser<'a, &'a [Token], SingleColJoinStat, extra::Err<Rich<'a, Token>>> + Clone {
     let left = just(Token::Stat(StatKeyword::Left)).to(SingleColJoinType::Left);
@@ -160,6 +154,17 @@ fn single_col_join_stat<'a>(
             left_on,
             right_on,
         })
+        .boxed()
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UseStat {
+    pub df_name: String,
+}
+fn use_stat<'a>() -> impl Parser<'a, &'a [Token], UseStat, extra::Err<Rich<'a, Token>>> + Clone {
+    just(Token::Stat(StatKeyword::Use))
+        .ignore_then(variable_token())
+        .map(|df_name| UseStat { df_name })
         .boxed()
 }
 
