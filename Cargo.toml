@@ -1,6 +1,6 @@
 [package]
 name = "dfsql"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 description = "SQL REPL for Data Frames"
 license = "MIT"
@@ -9,17 +9,20 @@ repository = "https://github.com/Banyc/dfsql"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1"
+anyhow = { version = "1", optional = true }
 chumsky = { version = "=1.0.0-alpha.6" }
-clap = { version = "4", features = ["derive"] }
-fancy-regex = "0.13"
+clap = { version = "4", features = ["derive"], optional = true }
+fancy-regex = { version = "0.13", optional = true }
 polars = { version = "0.36", features = [
     "abs",
-    "json",
     "lazy",
     "lazy_regex",
     "log",
     "strings",
 ] }
-rustyline = { version = "13", features = ["derive"] }
+rustyline = { version = "13", features = ["derive"], optional = true }
 thiserror = "1"
+
+[features]
+default = ["cli"]
+cli = ["anyhow", "clap", "fancy-regex", "polars/json", "rustyline"]

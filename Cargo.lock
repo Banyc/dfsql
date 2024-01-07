@@ -393,7 +393,7 @@ dependencies = [
 
 [[package]]
 name = "dfsql"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "chumsky",
@@ -1563,9 +1563,9 @@ checksum = "fe895eb47f22e2ddd4dabc02bce419d2e643c8e3b585c78158b349195bc24d82"
 
 [[package]]
 name = "strsim"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73473c0e59e6d5812c5dfe2a064a6444949f089e20eec9a2e5506596494e4623"
+checksum = "ccbca6f34534eb78dbee83f6b2c9442fea7113f43d9e80ea320f0972ae5dc08d"
 
 [[package]]
 name = "strum"

@@ -1,6 +1,10 @@
+#[cfg(feature = "cli")]
 pub mod cli;
 pub mod df;
+#[cfg(feature = "cli")]
 pub mod handler;
+#[cfg(feature = "cli")]
 pub mod io;
 pub mod sql;
+#[cfg(feature = "cli")]
 pub mod visual;
