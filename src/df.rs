@@ -5,17 +5,50 @@ use thiserror::Error;
 
 use crate::sql::{self, SortOrder};
 
-pub fn apply(
-    df: LazyFrame,
-    s: &sql::S,
-    others: &HashMap<String, LazyFrame>,
-) -> Result<LazyFrame, ApplyStatError> {
-    let mut df = df;
-    for stat in &s.statements {
-        df = apply_stat(df, stat, others)?;
-    }
-    Ok(df)
+pub struct DfExecutor {
+    df_name: String,
+    input: HashMap<String, LazyFrame>,
 }
+impl DfExecutor {
+    pub fn new(df_name: String, input: HashMap<String, LazyFrame>) -> Option<Self> {
+        input.get(&df_name)?;
+        Some(Self { df_name, input })
+    }
+
+    pub fn input(&self) -> &HashMap<String, LazyFrame> {
+        &self.input
+    }
+
+    pub fn df_name(&self) -> &String {
+        &self.df_name
+    }
+
+    pub fn df(&self) -> &LazyFrame {
+        &self.input[&self.df_name]
+    }
+
+    pub fn set_df_name(&mut self, df_name: String) -> Result<(), DfNotExists> {
+        self.input.get(&df_name).ok_or(DfNotExists)?;
+        self.df_name = df_name;
+        Ok(())
+    }
+
+    pub fn set_df(&mut self, df: LazyFrame) {
+        *self.input.get_mut(&self.df_name).unwrap() = df;
+    }
+
+    pub fn execute(&mut self, s: &sql::S) -> Result<(), ApplyStatError> {
+        let mut df = self.df().clone();
+        for stat in &s.statements {
+            df = apply_stat(df, stat, &self.input)?;
+        }
+        *self.input.get_mut(&self.df_name).unwrap() = df;
+        Ok(())
+    }
+}
+#[derive(Debug, Error, Clone)]
+#[error("Data frame does not exist")]
+pub struct DfNotExists;
 
 fn apply_stat(
     df: LazyFrame,

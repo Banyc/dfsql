@@ -107,8 +107,6 @@ pub fn read_sql_file(path: impl AsRef<Path>) -> anyhow::Result<sql::S> {
     let mut src = String::new();
     file.read_to_string(&mut src)?;
     drop(file);
-    let Some(s) = sql::parse(&src) else {
-        bail!("Failed to parse SQL");
-    };
+    let s = sql::parse(&src)?;
     Ok(s)
 }

@@ -1,48 +1,56 @@
 use std::collections::HashMap;
 
 use crate::{
-    df::{apply, ApplyStatError},
+    df::{ApplyStatError, DfExecutor},
     sql,
 };
-use anyhow::bail;
 use polars::lazy::frame::LazyFrame;
 
 pub struct LineExecutor {
     history: Vec<String>,
-    original_df: LazyFrame,
-    others: HashMap<String, LazyFrame>,
+    original_df_name: String,
+    original_input: HashMap<String, LazyFrame>,
+    executor: DfExecutor,
 }
 
 impl LineExecutor {
-    pub fn new(original_df: LazyFrame, others: HashMap<String, LazyFrame>) -> Self {
+    pub fn new(executor: DfExecutor) -> Self {
+        let original_df_name = executor.df_name().clone();
+        let original_input = executor.input().clone();
         Self {
             history: vec![],
-            original_df,
-            others,
+            original_df_name,
+            original_input,
+            executor,
         }
     }
 
-    pub fn reset(&mut self) -> LazyFrame {
+    pub fn reset(&mut self) {
+        self.executor =
+            DfExecutor::new(self.original_df_name.clone(), self.original_input.clone()).unwrap();
         self.history.clear();
-        self.original_df.clone()
     }
 
-    pub fn undo(&mut self) -> anyhow::Result<LazyFrame> {
+    pub fn undo(&mut self) -> anyhow::Result<()> {
+        self.executor =
+            DfExecutor::new(self.original_df_name.clone(), self.original_input.clone()).unwrap();
         self.history.pop();
         let sql = self.history.iter().map(|s| sql::parse(s).unwrap());
-        let df = apply_history(self.original_df.clone(), sql, &self.others)?;
-        Ok(df)
+        apply_history(sql, &mut self.executor)?;
+        Ok(())
     }
 
-    pub fn execute(&mut self, df: LazyFrame, line: String) -> anyhow::Result<LazyFrame> {
-        let Some(sql) = sql::parse(&line) else {
-            bail!("Failed to parse SQL");
-        };
-        let df = apply(df, &sql, &self.others)?;
+    pub fn execute(&mut self, line: String) -> anyhow::Result<()> {
+        let s = sql::parse(&line)?;
+        self.executor.execute(&s)?;
         if !line.trim().is_empty() {
             self.history.push(line);
         }
-        Ok(df)
+        Ok(())
+    }
+
+    pub fn df(&self) -> &LazyFrame {
+        self.executor.df()
     }
 
     pub fn history(&self) -> &Vec<String> {
@@ -51,13 +59,11 @@ impl LineExecutor {
 }
 
 fn apply_history(
-    df: LazyFrame,
     sql: impl Iterator<Item = sql::S>,
-    others: &HashMap<String, LazyFrame>,
-) -> Result<LazyFrame, ApplyStatError> {
-    let mut df = df;
+    executor: &mut DfExecutor,
+) -> Result<(), ApplyStatError> {
     for s in sql {
-        df = apply(df, &s, others)?;
+        executor.execute(&s)?;
     }
-    Ok(df)
+    Ok(())
 }
