@@ -223,14 +223,16 @@ fn literal<'a>() -> impl Parser<'a, &'a str, Literal, extra::Err<Rich<'a, char>>
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Type {
     Str,
+    UInt,
     Int,
     Float,
 }
 fn type_keyword<'a>() -> impl Parser<'a, &'a str, Type, extra::Err<Rich<'a, char>>> + Clone {
     let str = text::keyword("str").to(Type::Str);
+    let uint = text::keyword("uint").to(Type::UInt);
     let int = text::keyword("int").to(Type::Int);
     let float = text::keyword("float").to(Type::Float);
-    choice((str, int, float)).boxed()
+    choice((str, uint, int, float)).boxed()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

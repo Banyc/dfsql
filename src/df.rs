@@ -234,6 +234,7 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
         sql::expr::Expr::Cast(cast) => {
             let ty = match cast.ty {
                 sql::lexer::Type::Str => DataType::String,
+                sql::lexer::Type::UInt => DataType::UInt64,
                 sql::lexer::Type::Int => DataType::Int64,
                 sql::lexer::Type::Float => DataType::Float64,
             };
