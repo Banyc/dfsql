@@ -40,7 +40,7 @@ impl DfExecutor {
     pub fn execute(&mut self, s: &sql::S) -> Result<(), ApplyStatError> {
         let mut df = self.df().clone();
         for stat in &s.statements {
-            df = apply_stat(df, stat, &self.input)?;
+            df = apply_stat(df, stat, &mut self.input)?;
             if let sql::stat::Stat::Use(r#use) = stat {
                 self.df_name = r#use.df_name.clone();
             }
@@ -56,7 +56,7 @@ pub struct DfNotExists;
 fn apply_stat(
     df: LazyFrame,
     stat: &sql::stat::Stat,
-    others: &HashMap<String, LazyFrame>,
+    others: &mut HashMap<String, LazyFrame>,
 ) -> Result<LazyFrame, ApplyStatError> {
     Ok(match stat {
         sql::stat::Stat::Select(select) => {
@@ -111,6 +111,12 @@ fn apply_stat(
                 .get(df_name)
                 .ok_or_else(|| ApplyStatError::DfNotExists(df_name.clone()))?
                 .clone()
+        }
+        sql::stat::Stat::Clone(clone) => {
+            let df_name = &clone.df_name;
+            let df_clone = df.clone();
+            others.insert(df_name.into(), df_clone);
+            df
         }
     })
 }

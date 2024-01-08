@@ -16,6 +16,7 @@ pub enum Stat {
     Sort(SortStat),
     Join(JoinStat),
     Use(UseStat),
+    Clone(CloneStat),
 }
 
 pub fn parser<'a>() -> impl Parser<'a, &'a [Token], S, extra::Err<Rich<'a, Token>>> + Clone {
@@ -27,7 +28,10 @@ pub fn parser<'a>() -> impl Parser<'a, &'a [Token], S, extra::Err<Rich<'a, Token
     let sort = sort_stat().map(Stat::Sort);
     let join = join_stat().map(Stat::Join);
     let r#use = use_stat().map(Stat::Use);
-    let stat = choice((select, group_agg, filter, limit, reverse, sort, join, r#use));
+    let clone = clone_stat().map(Stat::Clone);
+    let stat = choice((
+        select, group_agg, filter, limit, reverse, sort, join, r#use, clone,
+    ));
 
     stat.repeated()
         .collect()
@@ -165,6 +169,18 @@ fn use_stat<'a>() -> impl Parser<'a, &'a [Token], UseStat, extra::Err<Rich<'a, T
     just(Token::Stat(StatKeyword::Use))
         .ignore_then(variable_token())
         .map(|df_name| UseStat { df_name })
+        .boxed()
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CloneStat {
+    pub df_name: String,
+}
+fn clone_stat<'a>() -> impl Parser<'a, &'a [Token], CloneStat, extra::Err<Rich<'a, Token>>> + Clone
+{
+    just(Token::Stat(StatKeyword::Use))
+        .ignore_then(variable_token())
+        .map(|df_name| CloneStat { df_name })
         .boxed()
 }
 
