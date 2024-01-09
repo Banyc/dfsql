@@ -266,8 +266,8 @@ fn string_functor<'a>(
 
 /// Ref: <https://github.com/zesterer/chumsky/blob/dce5918bd2dad591ab399d2e191254640a9ed14f/examples/json.rs#L64>
 fn string<'a>() -> impl Parser<'a, &'a str, String, extra::Err<Rich<'a, char>>> + Clone {
-    let escape = just('\\')
-        .then(choice((
+    let escaped = just('\\')
+        .ignore_then(choice((
             just('\\'),
             just('/'),
             just('"'),
@@ -285,15 +285,11 @@ fn string<'a>() -> impl Parser<'a, &'a str, String, extra::Err<Rich<'a, char>>> 
                 },
             )),
         )))
-        .ignored()
         .boxed();
 
-    none_of("\\\"")
-        .ignored()
-        .or(escape)
+    choice((escaped, none_of('"')))
         .repeated()
-        .to_slice()
-        .map(ToString::to_string)
+        .collect::<String>()
         .delimited_by(just('"'), just('"'))
         .boxed()
 }
@@ -343,5 +339,30 @@ mod tests {
                 Token::Literal(Literal::String(String::from("hi"))),
             ]
         );
+    }
+
+    #[test]
+    fn test_string() {
+        let s = string();
+        let s = s.parse(r#""\\""#).unwrap();
+        assert_eq!(s, r#"\"#);
+
+        let src = r#" "\"" "#;
+        let l = lexer();
+        let tokens = l.parse(src).unwrap();
+        assert_eq!(tokens.len(), 1);
+        let Token::Literal(Literal::String(s)) = &tokens[0] else {
+            panic!();
+        };
+        assert_eq!(s, r#"""#);
+
+        let src = r#" "\\." "#;
+        let l = lexer();
+        let tokens = l.parse(src).unwrap();
+        assert_eq!(tokens.len(), 1);
+        let Token::Literal(Literal::String(s)) = &tokens[0] else {
+            panic!();
+        };
+        assert_eq!(s, r#"\."#);
     }
 }
