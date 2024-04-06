@@ -189,7 +189,7 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
             }
         }
         sql::expr::Expr::Standalone(standalone) => match standalone.operator {
-            sql::expr::StandaloneOperator::Count => count(),
+            sql::expr::StandaloneOperator::Len => len(),
         },
         sql::expr::Expr::SortBy(sort_by) => {
             let columns: Vec<_> = sort_by.pairs.iter().map(|(c, _)| convert_expr(c)).collect();
@@ -253,7 +253,8 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
             }
             sql::expr::StrExpr::Extract(extract) => {
                 let str = convert_expr(&extract.str);
-                str.str().extract(&extract.pattern, extract.group)
+                let pattern = convert_expr(&extract.pattern);
+                str.str().extract(pattern, extract.group)
             }
             sql::expr::StrExpr::ExtractAll(extract_all) => {
                 let str = convert_expr(&extract_all.str);

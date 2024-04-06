@@ -1,6 +1,6 @@
 [package]
 name = "dfsql"
-version = "0.6.2"
+version = "0.7.0"
 edition = "2021"
 description = "SQL REPL for Data Frames"
 license = "MIT"
@@ -13,14 +13,14 @@ anyhow = { version = "1", optional = true }
 chumsky = { version = "=1.0.0-alpha.6" }
 clap = { version = "4", features = ["derive"], optional = true }
 fancy-regex = { version = "0.13", optional = true }
-polars = { version = "0.36", features = [
+polars = { version = "0.38", features = [
     "abs",
     "lazy",
-    "lazy_regex",
+    "regex",
     "log",
     "strings",
 ] }
-rustyline = { version = "13", features = ["derive"], optional = true }
+rustyline = { version = "14", features = ["derive"], optional = true }
 thiserror = "1"
 
 [features]

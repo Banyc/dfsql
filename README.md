@@ -2,6 +2,9 @@
 
 ![](img/terminal.png)
 
+- Revision: the standalone `count` command is replaced with `len`, so make sure to replace `(count)` and `col "count"` with `len` and `col "len"` respectively.
+  - the unary `count <col>` command is unaffected.
+
 ## Install
 
 ```bash

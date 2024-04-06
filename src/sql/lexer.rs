@@ -131,6 +131,7 @@ pub enum ExprKeyword {
     Sum,
     Sqrt,
     Count,
+    Len,
     First,
     Last,
     Sort,
@@ -161,6 +162,7 @@ fn expr_keyword<'a>() -> impl Parser<'a, &'a str, ExprKeyword, extra::Err<Rich<'
     let sum = text::keyword("sum").to(ExprKeyword::Sum);
     let sqrt = text::keyword("sqrt").to(ExprKeyword::Sqrt);
     let count = text::keyword("count").to(ExprKeyword::Count);
+    let len = text::keyword("len").to(ExprKeyword::Len);
     let sort = text::keyword("col_sort").to(ExprKeyword::Sort);
     let asc = text::keyword("asc").to(ExprKeyword::Asc);
     let desc = text::keyword("desc").to(ExprKeyword::Desc);
@@ -187,10 +189,10 @@ fn expr_keyword<'a>() -> impl Parser<'a, &'a str, ExprKeyword, extra::Err<Rich<'
     let pow = text::keyword("pow").to(ExprKeyword::Pow);
     let log = text::keyword("log").to(ExprKeyword::Log);
     let a = choice((
-        sum, sqrt, count, sort, asc, desc, reverse, first, last, mean, median, max, min, var, std,
-        abs, unique, by, is, alias, col, exclude, cast, nan, all, any,
+        sum, sqrt, count, len, sort, asc, desc, reverse, first, last, mean, median, max, min, var,
+        std, abs, unique, by, is, alias, col, exclude, cast, nan, all,
     ));
-    let b = choice((pow, log));
+    let b = choice((any, pow, log));
     choice((a, b)).boxed()
 }
 

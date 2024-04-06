@@ -281,12 +281,12 @@ pub struct StandaloneExpr {
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StandaloneOperator {
-    Count,
+    Len,
 }
 fn standalone_expr<'a>(
 ) -> impl Parser<'a, &'a [Token], StandaloneExpr, extra::Err<Rich<'a, Token>>> + Clone {
-    let count = select_ref! { Token::ExprKeyword(ExprKeyword::Count) => StandaloneOperator::Count };
-    let operator = choice((count,));
+    let len = select_ref! { Token::ExprKeyword(ExprKeyword::Len) => StandaloneOperator::Len };
+    let operator = choice((len,));
     operator.map(|operator| StandaloneExpr { operator })
 }
 
@@ -403,7 +403,7 @@ fn contains<'a>(
 #[derive(Debug, Clone, PartialEq)]
 pub struct Extract {
     pub str: Expr,
-    pub pattern: String,
+    pub pattern: Expr,
     pub group: usize,
 }
 fn extract<'a>(
@@ -412,7 +412,7 @@ fn extract<'a>(
     let group = select_ref! { Token::Literal(Literal::Int(group)) => group }
         .map(|group| group.parse::<usize>().unwrap());
     just(Token::StringKeyword(StringKeyword::Extract))
-        .ignore_then(string_token())
+        .ignore_then(expr.clone())
         .then(group)
         .then(expr)
         .map(|((pattern, group), str)| Extract {

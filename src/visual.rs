@@ -30,6 +30,7 @@ impl SqlHelper {
             ("sum", color_functor()),
             ("sqrt", color_functor()),
             ("count", color_functor()),
+            ("len", color_functor()),
             ("col_sort", color_functor()),
             ("asc", color_functor()),
             ("desc", color_functor()),
