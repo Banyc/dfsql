@@ -10,10 +10,10 @@ repository = "https://github.com/Banyc/dfsql"
 
 [dependencies]
 anyhow = { version = "1", optional = true }
-chumsky = { version = "=1.0.0-alpha.6" }
+chumsky = { version = "=1.0.0-alpha.7" }
 clap = { version = "4", features = ["derive"], optional = true }
 fancy-regex = { version = "0.13", optional = true }
-polars = { version = "0.38", features = [
+polars = { version = "0.39", features = [
     "abs",
     "lazy",
     "regex",

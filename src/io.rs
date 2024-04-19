@@ -45,10 +45,10 @@ pub fn write_df_output(mut df: DataFrame, path: impl AsRef<Path>) -> anyhow::Res
             path.as_ref().to_string_lossy()
         );
     };
-    let _ = std::fs::remove_file(&path);
     let output = std::fs::File::options()
         .write(true)
         .create(true)
+        .truncate(true)
         .open(&path)?;
     match extension.to_string_lossy().as_ref() {
         "csv" => CsvWriter::new(output).finish(&mut df)?,
@@ -72,10 +72,10 @@ pub fn write_repl_sql_output<'a>(
     sql: impl Iterator<Item = &'a String>,
     path: impl AsRef<Path>,
 ) -> anyhow::Result<()> {
-    let _ = std::fs::remove_file(&path);
     let mut output = std::fs::File::options()
         .write(true)
         .create(true)
+        .truncate(true)
         .open(path)?;
     for s in sql {
         output.write_all(s.as_bytes())?;

@@ -42,7 +42,7 @@ impl DfExecutor {
         for stat in &s.statements {
             df = apply_stat(df, stat, &mut self.input)?;
             if let sql::stat::Stat::Use(r#use) = stat {
-                self.df_name = r#use.df_name.clone();
+                self.df_name.clone_from(&r#use.df_name);
             }
         }
         *self.input.get_mut(&self.df_name).unwrap() = df;
@@ -78,11 +78,9 @@ fn apply_stat(
         }
         sql::stat::Stat::Reverse => df.reverse(),
         sql::stat::Stat::Sort(sort) => {
-            let options = SortOptions {
-                descending: matches!(sort.order, SortOrder::Desc),
-                ..Default::default()
-            };
-            df.sort(&sort.column, options)
+            let options = SortMultipleOptions::default()
+                .with_order_descending(matches!(sort.order, SortOrder::Desc));
+            df.sort([&sort.column], options)
         }
         sql::stat::Stat::Join(join) => match join {
             sql::stat::JoinStat::SingleCol(join) => {
@@ -193,17 +191,19 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
         },
         sql::expr::Expr::SortBy(sort_by) => {
             let columns: Vec<_> = sort_by.pairs.iter().map(|(c, _)| convert_expr(c)).collect();
-            let descending: Vec<_> = sort_by
+            let descending = sort_by
                 .pairs
                 .iter()
-                .map(|(_, o)| matches!(o, SortOrder::Desc))
-                .collect();
+                .map(|(_, o)| matches!(o, SortOrder::Desc));
             let expr = convert_expr(&sort_by.expr);
-            expr.sort_by(columns, descending)
+            let options = SortMultipleOptions::default().with_order_descendings(descending);
+            expr.sort_by(columns, options)
         }
         sql::expr::Expr::Sort(sort) => {
             let expr = convert_expr(&sort.expr);
-            expr.sort(matches!(sort.order, SortOrder::Desc))
+            let options =
+                SortOptions::default().with_order_descending(matches!(sort.order, SortOrder::Desc));
+            expr.sort(options)
         }
         sql::expr::Expr::Alias(alias) => {
             let expr = convert_expr(&alias.expr);
