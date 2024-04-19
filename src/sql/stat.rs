@@ -102,14 +102,13 @@ fn limit_stat<'a>() -> impl Parser<'a, &'a [Token], LimitStat, extra::Err<Rich<'
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SortStat {
-    pub column: String,
-    pub order: SortOrder,
+    pub pairs: Vec<(SortOrder, String)>,
 }
 fn sort_stat<'a>() -> impl Parser<'a, &'a [Token], SortStat, extra::Err<Rich<'a, Token>>> + Clone {
+    let pair = sort_order().then(lax_col_name());
     just(Token::Stat(StatKeyword::Sort))
-        .ignore_then(sort_order())
-        .then(lax_col_name())
-        .map(|(order, column)| SortStat { column, order })
+        .ignore_then(pair.repeated().collect())
+        .map(|pairs| SortStat { pairs })
         .boxed()
 }
 

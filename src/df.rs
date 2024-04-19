@@ -78,9 +78,10 @@ fn apply_stat(
         }
         sql::stat::Stat::Reverse => df.reverse(),
         sql::stat::Stat::Sort(sort) => {
-            let options = SortMultipleOptions::default()
-                .with_order_descending(matches!(sort.order, SortOrder::Desc));
-            df.sort([&sort.column], options)
+            let columns: Vec<_> = sort.pairs.iter().map(|(_, c)| c).collect();
+            let descending = sort.pairs.iter().map(|(o, _)| matches!(o, SortOrder::Desc));
+            let options = SortMultipleOptions::default().with_order_descendings(descending);
+            df.sort(columns, options)
         }
         sql::stat::Stat::Join(join) => match join {
             sql::stat::JoinStat::SingleCol(join) => {
@@ -190,11 +191,11 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
             sql::expr::StandaloneOperator::Len => len(),
         },
         sql::expr::Expr::SortBy(sort_by) => {
-            let columns: Vec<_> = sort_by.pairs.iter().map(|(c, _)| convert_expr(c)).collect();
+            let columns: Vec<_> = sort_by.pairs.iter().map(|(_, c)| convert_expr(c)).collect();
             let descending = sort_by
                 .pairs
                 .iter()
-                .map(|(_, o)| matches!(o, SortOrder::Desc));
+                .map(|(o, _)| matches!(o, SortOrder::Desc));
             let expr = convert_expr(&sort_by.expr);
             let options = SortMultipleOptions::default().with_order_descendings(descending);
             expr.sort_by(columns, options)

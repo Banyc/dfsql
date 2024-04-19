@@ -176,13 +176,13 @@ fn binary_expr<'a>(
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SortByExpr {
-    pub pairs: Vec<(Expr, SortOrder)>,
+    pub pairs: Vec<(SortOrder, Expr)>,
     pub expr: Expr,
 }
 fn sort_by_expr<'a>(
     expr: impl Parser<'a, &'a [Token], Expr, extra::Err<Rich<'a, Token>>> + Clone,
 ) -> impl Parser<'a, &'a [Token], SortByExpr, extra::Err<Rich<'a, Token>>> + Clone {
-    let pair = expr.clone().then(sort_order());
+    let pair = sort_order().then(expr.clone());
     just(Token::Stat(StatKeyword::Sort))
         .ignore_then(expr)
         .then_ignore(just(Token::ExprKeyword(ExprKeyword::By)))
