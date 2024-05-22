@@ -3,10 +3,11 @@ use std::{collections::HashMap, path::PathBuf};
 use crate::{
     df::DfExecutor,
     handler::LineExecutor,
-    io::{read_df_file, read_repl_sql_file, read_sql_file, write_df_output, write_repl_sql_output},
+    io::{read_repl_sql_file, read_sql_file, write_repl_sql_output},
     visual::SqlHelper,
 };
 use anyhow::{anyhow, bail};
+use banyc_polars_util::{read_df_file, write_df_output};
 use clap::Parser;
 use polars::prelude::*;
 use rustyline::{error::ReadlineError, Editor};
@@ -34,14 +35,6 @@ pub struct Cli {
 }
 
 impl Cli {
-    fn infer_schema_length(&self) -> Option<usize> {
-        let lazy = self.sql.is_some() || self.lazy;
-        match lazy {
-            true => Some(self.infer_schema_length),
-            false => None,
-        }
-    }
-
     pub fn run(self) -> anyhow::Result<()> {
         let mut input = HashMap::new();
         let mut first_input_name = None;
@@ -54,7 +47,7 @@ impl Cli {
                     let name = p.file_stem().and_then(|n| n.to_str()).unwrap_or(inp);
                     (name.to_owned(), inp)
                 });
-            let df = read_df_file(path, self.infer_schema_length())?;
+            let df = read_df_file(path)?;
             if first_input_name.is_none() {
                 first_input_name = Some(name.clone());
             }

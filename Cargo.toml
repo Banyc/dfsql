@@ -1,6 +1,6 @@
 [package]
 name = "dfsql"
-version = "0.9.0"
+version = "0.10.0"
 edition = "2021"
 description = "SQL REPL for Data Frames"
 license = "MIT"
@@ -10,10 +10,11 @@ repository = "https://github.com/Banyc/dfsql"
 
 [dependencies]
 anyhow = { version = "1", optional = true }
+banyc_polars_util = { git = "https://github.com/Banyc/banyc_polars_util.git", tag = "v0.0.2", optional = true }
 chumsky = { version = "=1.0.0-alpha.7" }
 clap = { version = "4", features = ["derive"], optional = true }
 fancy-regex = { version = "0.13", optional = true }
-polars = { version = "0.39", features = [
+polars = { version = "0.40", features = [
     "abs",
     "lazy",
     "regex",
@@ -25,4 +26,4 @@ thiserror = "1"
 
 [features]
 default = ["cli"]
-cli = ["anyhow", "clap", "fancy-regex", "polars/json", "rustyline"]
+cli = ["anyhow", "clap", "fancy-regex", "banyc_polars_util", "rustyline"]
