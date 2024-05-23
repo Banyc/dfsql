@@ -434,7 +434,7 @@ dependencies = [
 
 [[package]]
 name = "dfsql"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "anyhow",
  "banyc_polars_util",
@@ -596,9 +596,9 @@ dependencies = [
 
 [[package]]
 name = "hdv"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e17d72b24ef5fde0b4bb0625f1a4e49fd0d9e0b2601e27b54f5c52186cba8772"
+checksum = "f68f7f674adf5a3eca4be9049b3b86288b99df7d56a229f749149ed9baf4b6b0"
 dependencies = [
  "bincode",
  "integer-encoding",

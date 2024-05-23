@@ -105,7 +105,8 @@ pub struct SortStat {
     pub pairs: Vec<(SortOrder, String)>,
 }
 fn sort_stat<'a>() -> impl Parser<'a, &'a [Token], SortStat, extra::Err<Rich<'a, Token>>> + Clone {
-    let pair = sort_order().then(lax_col_name());
+    let name = choice((lax_col_name(), string_token()));
+    let pair = sort_order().then(name);
     just(Token::Stat(StatKeyword::Sort))
         .ignore_then(pair.repeated().collect())
         .map(|pairs| SortStat { pairs })
