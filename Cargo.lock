@@ -139,7 +139,7 @@ checksum = "0c4b4d0bd25bd0b74681c0ad21497610ce1b7c91b1022cd21c80c6fbdd9476b0"
 [[package]]
 name = "banyc_polars_util"
 version = "0.1.0"
-source = "git+https://github.com/Banyc/banyc_polars_util.git?tag=v0.0.3#e7da60172002628cce6de919000b569d1bd0f545"
+source = "git+https://github.com/Banyc/banyc_polars_util.git?tag=v0.0.4#da3bf6587972220477a72394337bf54450c7b1d7"
 dependencies = [
  "anyhow",
  "hdv",
@@ -596,7 +596,7 @@ dependencies = [
 [[package]]
 name = "hdv"
 version = "0.1.0"
-source = "git+https://github.com/Banyc/hdv.git?tag=v0.0.3#cdad8b7e41e7e952af14cebf0f8c50a969b7bea3"
+source = "git+https://github.com/Banyc/hdv.git?tag=v0.0.4#5ffba2eed48a230a06217218056ef6723019f33d"
 dependencies = [
  "bincode",
  "integer-encoding",
