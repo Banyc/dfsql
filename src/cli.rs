@@ -29,9 +29,6 @@ pub struct Cli {
     /// Only evaluate the data frame on exit
     #[clap(short, long, default_value_t = false)]
     lazy: bool,
-    /// Set the number of rows to use when inferring the csv schema.
-    #[clap(long, default_value_t = 100)]
-    infer_schema_length: usize,
 }
 
 impl Cli {
