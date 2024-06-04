@@ -44,8 +44,8 @@ impl DfExecutor {
             if let sql::stat::Stat::Use(r#use) = stat {
                 self.df_name.clone_from(&r#use.df_name);
             }
+            self.set_df(df.clone());
         }
-        *self.input.get_mut(&self.df_name).unwrap() = df;
         Ok(())
     }
 }
