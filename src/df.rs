@@ -42,7 +42,7 @@ impl DfExecutor {
         for stat in &s.statements {
             df = apply_stat(df, stat, &mut self.input)?;
             if let sql::stat::Stat::Use(r#use) = stat {
-                self.df_name.clone_from(&r#use.df_name);
+                self.set_df_name(r#use.df_name.clone()).unwrap();
             }
             self.set_df(df.clone());
         }
