@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Neg};
 
 use polars::prelude::*;
 use thiserror::Error;
@@ -165,7 +165,7 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
         sql::expr::Expr::Unary(unary) => {
             let expr = convert_expr(&unary.expr);
             match unary.operator {
-                sql::expr::UnaryOperator::Neg => expr.clone() - expr.clone() - expr,
+                sql::expr::UnaryOperator::Neg => expr.neg(),
                 sql::expr::UnaryOperator::Not => expr.not(),
                 sql::expr::UnaryOperator::Abs => expr.abs(),
                 sql::expr::UnaryOperator::Sum => expr.sum(),
