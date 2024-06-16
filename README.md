@@ -80,7 +80,7 @@ dfsql -i your.csv -o a-new.csv
   ```
 - `sort`
   ```py
-  sort (asc | desc | ()) <col>
+  sort ((asc | desc | ()) <col>)*
   ```
   ```sql
   sort icpsr_id
@@ -90,9 +90,17 @@ dfsql -i your.csv -o a-new.csv
   use <var>
   ```
   ```py
-  use your
+  use other
   ```
-  - Switch to the data frame called `your`.
+  - Switch to the data frame called `other`.
+- join
+  ```py
+  (left | right | inner | outer) join <var> on <col> <col>?
+  ```
+  ```py
+  left join other on id ID
+  ```
+  - left join the data frame called `other` on my column `id` and its column `ID`
 
 ## Expressions
 
