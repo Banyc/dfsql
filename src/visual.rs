@@ -23,7 +23,7 @@ impl SqlHelper {
             ("left", color_keyword()),
             ("right", color_keyword()),
             ("inner", color_keyword()),
-            ("outer", color_keyword()),
+            ("full", color_keyword()),
             ("use", color_keyword()),
             ("clone", color_keyword()),
             ("abs", color_functor()),

@@ -57,7 +57,7 @@ pub enum StatKeyword {
     Left,
     Right,
     Inner,
-    Outer,
+    Full,
     Use,
 }
 fn stat_keyword<'a>() -> impl Parser<'a, &'a str, StatKeyword, extra::Err<Rich<'a, char>>> + Clone {
@@ -70,12 +70,12 @@ fn stat_keyword<'a>() -> impl Parser<'a, &'a str, StatKeyword, extra::Err<Rich<'
     let sort = text::keyword("sort").to(StatKeyword::Sort);
     let join = text::keyword("join").to(StatKeyword::Join);
     let on = text::keyword("on").to(StatKeyword::On);
-    let outer = text::keyword("outer").to(StatKeyword::Outer);
+    let full = text::keyword("full").to(StatKeyword::Full);
     let inner = text::keyword("inner").to(StatKeyword::Inner);
     let left = text::keyword("left").to(StatKeyword::Left);
     let right = text::keyword("right").to(StatKeyword::Right);
     let r#use = text::keyword("use").to(StatKeyword::Use);
-    let join_type = choice((outer, inner, left, right));
+    let join_type = choice((full, inner, left, right));
     choice((
         select, group_by, agg, filter, limit, reverse, sort, join, on, join_type, r#use,
     ))

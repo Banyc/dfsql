@@ -52,6 +52,9 @@ impl LineExecutor {
     pub fn df(&self) -> &LazyFrame {
         self.executor.df()
     }
+    pub fn df_mut(&mut self) -> &mut LazyFrame {
+        self.executor.df_mut()
+    }
 
     pub fn history(&self) -> &Vec<String> {
         &self.history

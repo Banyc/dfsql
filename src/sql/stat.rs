@@ -136,15 +136,15 @@ pub enum SingleColJoinType {
     Left,
     Right,
     Inner,
-    Outer,
+    Full,
 }
 fn single_col_join_stat<'a>(
 ) -> impl Parser<'a, &'a [Token], SingleColJoinStat, extra::Err<Rich<'a, Token>>> + Clone {
     let left = just(Token::Stat(StatKeyword::Left)).to(SingleColJoinType::Left);
     let right = just(Token::Stat(StatKeyword::Right)).to(SingleColJoinType::Right);
     let inner = just(Token::Stat(StatKeyword::Inner)).to(SingleColJoinType::Inner);
-    let outer = just(Token::Stat(StatKeyword::Outer)).to(SingleColJoinType::Outer);
-    let ty = choice((left, right, inner, outer));
+    let full = just(Token::Stat(StatKeyword::Full)).to(SingleColJoinType::Full);
+    let ty = choice((left, right, inner, full));
     // let on = just(Token::Stat(StatKeyword::On)).ignore_then(expr().repeated().collect());
     let on = just(Token::Stat(StatKeyword::On))
         .ignore_then(expr())

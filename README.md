@@ -95,7 +95,7 @@ dfsql -i your.csv -o a-new.csv
   - Switch to the data frame called `other`.
 - join
   ```py
-  (left | right | inner | outer) join <var> on <col> <col>?
+  (left | right | inner | full) join <var> on <col> <col>?
   ```
   ```py
   left join other on id ID

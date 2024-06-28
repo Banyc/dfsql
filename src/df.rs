@@ -26,6 +26,9 @@ impl DfExecutor {
     pub fn df(&self) -> &LazyFrame {
         &self.input[&self.df_name]
     }
+    pub fn df_mut(&mut self) -> &mut LazyFrame {
+        self.input.get_mut(&self.df_name).unwrap()
+    }
 
     pub fn set_df_name(&mut self, df_name: String) -> Result<(), DfNotExists> {
         self.input.get(&df_name).ok_or(DfNotExists)?;
@@ -80,7 +83,7 @@ fn apply_stat(
         sql::stat::Stat::Sort(sort) => {
             let columns: Vec<_> = sort.pairs.iter().map(|(_, c)| c).collect();
             let descending = sort.pairs.iter().map(|(o, _)| matches!(o, SortOrder::Desc));
-            let options = SortMultipleOptions::default().with_order_descendings(descending);
+            let options = SortMultipleOptions::default().with_order_descending_multi(descending);
             df.sort(columns, options)
         }
         sql::stat::Stat::Join(join) => match join {
@@ -100,7 +103,7 @@ fn apply_stat(
                     sql::stat::SingleColJoinType::Left => df.left_join(other, left_on, right_on),
                     sql::stat::SingleColJoinType::Right => other.left_join(df, left_on, right_on),
                     sql::stat::SingleColJoinType::Inner => df.inner_join(other, left_on, right_on),
-                    sql::stat::SingleColJoinType::Outer => df.outer_join(other, left_on, right_on),
+                    sql::stat::SingleColJoinType::Full => df.full_join(other, left_on, right_on),
                 }
             }
         },
@@ -197,7 +200,7 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
                 .iter()
                 .map(|(o, _)| matches!(o, SortOrder::Desc));
             let expr = convert_expr(&sort_by.expr);
-            let options = SortMultipleOptions::default().with_order_descendings(descending);
+            let options = SortMultipleOptions::default().with_order_descending_multi(descending);
             expr.sort_by(columns, options)
         }
         sql::expr::Expr::Sort(sort) => {
