@@ -112,7 +112,7 @@ impl Cli {
             let _ = rl.add_history_entry(&line);
 
             if line.trim() == "schema" {
-                match handler.df_mut().schema() {
+                match handler.df_mut().collect_schema() {
                     Ok(schema) => println!("{schema:?}"),
                     Err(e) => eprintln!("{e}"),
                 }
