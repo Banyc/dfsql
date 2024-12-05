@@ -84,7 +84,12 @@ impl Highlighter for SqlHelper {
         self.color.replace(line).into()
     }
 
-    fn highlight_char(&self, _line: &str, _pos: usize, _forced: bool) -> bool {
+    fn highlight_char(
+        &self,
+        _line: &str,
+        _pos: usize,
+        _forced: rustyline::highlight::CmdKind,
+    ) -> bool {
         true
     }
 }

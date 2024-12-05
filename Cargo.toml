@@ -21,8 +21,8 @@ polars = { version = "0.44", features = [
     "log",
     "strings",
 ] }
-rustyline = { version = "14", features = ["derive"], optional = true }
-thiserror = "1"
+rustyline = { version = "15", features = ["derive"], optional = true }
+thiserror = "2"
 
 [features]
 default = ["cli"]
