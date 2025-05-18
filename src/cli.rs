@@ -10,7 +10,7 @@ use anyhow::{anyhow, bail};
 use banyc_polars_util::{read_df_file, write_df_output};
 use clap::Parser;
 use polars::prelude::*;
-use rustyline::{error::ReadlineError, Editor};
+use rustyline::{Editor, error::ReadlineError};
 
 const SQL_EXTENSION: &str = "dfsql";
 
@@ -139,12 +139,12 @@ impl Cli {
                 eprintln!("{e}");
                 continue;
             };
-            if !self.lazy {
-                if let Err(e) = self.display_and_write_repl_output(&handler) {
-                    eprintln!("{e}");
-                    // Rollback
-                    handler.undo().unwrap();
-                }
+            if !self.lazy
+                && let Err(e) = self.display_and_write_repl_output(&handler)
+            {
+                eprintln!("{e}");
+                // Rollback
+                handler.undo().unwrap();
             }
         }
         if self.lazy {
