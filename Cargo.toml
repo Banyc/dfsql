@@ -1,6 +1,6 @@
 [package]
 name = "dfsql"
-version = "0.15.0"
+version = "0.15.1"
 edition = "2024"
 description = "SQL REPL for Data Frames"
 license = "MIT"
@@ -21,6 +21,8 @@ polars = { version = "0.47", features = [
     "log",
     "strings",
     "dtype-categorical",
+    # https://github.com/pola-rs/polars/issues/22733
+    "dtype-i128",
 ] }
 rustyline = { version = "15", features = ["derive"], optional = true }
 thiserror = "2"

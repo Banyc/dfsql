@@ -274,3 +274,23 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ref: <https://github.com/pola-rs/polars/issues/22733>
+    #[test]
+    fn test_i128() {
+        let s = "filter x = 0";
+        let s = sql::parse(s).unwrap();
+        let df = df!("x" => [0, 1]).unwrap();
+        let mut executor = DfExecutor::new(
+            "a".to_string(),
+            HashMap::from_iter([("a".to_string(), df.lazy())]),
+        )
+        .unwrap();
+        executor.execute(&s).unwrap();
+        executor.df().clone().collect().unwrap();
+    }
+}
