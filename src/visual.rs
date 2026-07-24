@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use fancy_regex::Regex;
-use rustyline::{highlight::Highlighter, Completer, Helper, Hinter, Validator};
+use rustyline::{Completer, Helper, Hinter, Validator, highlight::Highlighter};
 
 #[derive(Debug, Helper, Completer, Hinter, Validator)]
 pub struct SqlHelper {

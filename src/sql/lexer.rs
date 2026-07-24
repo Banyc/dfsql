@@ -1,4 +1,5 @@
-use chumsky::prelude::*;
+use winnow::prelude::*;
+use winnow::stream::AsChar;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -13,34 +14,338 @@ pub enum Token {
     Literal(Literal),
     Symbol(Symbol),
 }
-pub fn lexer<'a>() -> impl Parser<'a, &'a str, Vec<Token>, extra::Err<Rich<'a, char>>> + Clone {
-    recursive(|tokens| {
-        let parens = tokens
-            .clone()
-            .delimited_by(just('(').padded(), just(')').padded())
-            .map(Token::Parens);
-        let brackets = tokens
-            .clone()
-            .delimited_by(just('[').padded(), just(']').padded())
-            .map(Token::Brackets);
-        let group = choice((parens, brackets));
 
-        let ident = text::ident().map(ToString::to_string).map(Token::Variable);
+pub fn lex(source: &str) -> Result<Vec<Token>, String> {
+    let mut input = source;
+    let tokens = lexer.parse_next(&mut input).map_err(|e| format!("{e:?}"))?;
+    skip_ws(&mut input);
+    if input.is_empty() {
+        Ok(tokens)
+    } else {
+        Err(format!("unexpected input {input:?}"))
+    }
+}
 
-        let token = choice((
-            stat_keyword().map(Token::Stat),
-            expr_keyword().map(Token::ExprKeyword),
-            type_keyword().map(Token::Type),
-            conditional().map(Token::Conditional),
-            string_functor().map(Token::StringKeyword),
-            group,
-            symbol().map(Token::Symbol),
-            literal().map(Token::Literal),
-            ident,
-        ));
-        token.padded().repeated().collect()
+pub fn lexer(input: &mut &str) -> ModalResult<Vec<Token>> {
+    let mut tokens = Vec::new();
+    loop {
+        skip_ws(input);
+        if input.is_empty() || matches!(input.chars().next(), Some(')' | ']')) {
+            break Ok(tokens);
+        }
+        let start = input.len();
+        let token = token(input)?;
+        tokens.push(token);
+        if input.len() == start {
+            return Err(winnow::error::ErrMode::Backtrack(
+                winnow::error::ContextError::new(),
+            ));
+        }
+    }
+}
+
+fn skip_ws(input: &mut &str) {
+    while let Some(c) = input.chars().next() {
+        if c.is_whitespace() {
+            *input = &input[c.len_utf8()..];
+        } else {
+            break;
+        }
+    }
+}
+
+fn token(input: &mut &str) -> ModalResult<Token> {
+    let c = input
+        .chars()
+        .next()
+        .ok_or_else(|| winnow::error::ErrMode::Backtrack(winnow::error::ContextError::new()))?;
+    match c {
+        '(' => {
+            *input = &input[1..];
+            let inner = lexer.parse_next(input)?;
+            skip_ws(input);
+            expect_char(input, ')')?;
+            Ok(Token::Parens(inner))
+        }
+        ')' => Err(winnow::error::ErrMode::Backtrack(
+            winnow::error::ContextError::new(),
+        )),
+        '[' => {
+            *input = &input[1..];
+            let inner = lexer.parse_next(input)?;
+            skip_ws(input);
+            expect_char(input, ']')?;
+            Ok(Token::Brackets(inner))
+        }
+        ']' => Err(winnow::error::ErrMode::Backtrack(
+            winnow::error::ContextError::new(),
+        )),
+        '"' => parse_string(input).map(|s| Token::Literal(Literal::String(s))),
+        '-' => {
+            *input = &input[1..];
+            Ok(Token::Symbol(Symbol::Sub))
+        }
+        '0'..='9' => number_literal(input).map(Token::Literal),
+        '+' | '*' | '/' | '=' | '!' | '<' | '>' | '&' | '|' | ',' | '%' => {
+            symbol_char(c);
+            *input = &input[1..];
+            Ok(Token::Symbol(symbol_char(c)))
+        }
+        'a'..='z' | 'A'..='Z' | '_' => {
+            let ident = parse_ident(input);
+            Ok(keyword_or_var(ident))
+        }
+        _ => Err(winnow::error::ErrMode::Backtrack(
+            winnow::error::ContextError::new(),
+        )),
+    }
+}
+
+fn symbol_char(c: char) -> Symbol {
+    match c {
+        '+' => Symbol::Add,
+        '*' => Symbol::Mul,
+        '/' => Symbol::Div,
+        '=' => Symbol::Eq,
+        '!' => Symbol::Bang,
+        '<' => Symbol::LeftAngle,
+        '>' => Symbol::RightAngle,
+        '&' => Symbol::Ampersand,
+        '|' => Symbol::Pipe,
+        ',' => Symbol::Comma,
+        '%' => Symbol::Percent,
+        _ => unreachable!(),
+    }
+}
+
+fn expect_char(input: &mut &str, expected: char) -> ModalResult<()> {
+    match input.chars().next() {
+        Some(c) if c == expected => {
+            *input = &input[expected.len_utf8()..];
+            Ok(())
+        }
+        _ => Err(winnow::error::ErrMode::Backtrack(
+            winnow::error::ContextError::new(),
+        )),
+    }
+}
+
+fn parse_ident<'a>(input: &mut &'a str) -> &'a str {
+    let start = *input;
+    let mut len = 0;
+    for c in input.chars() {
+        if c.is_alphanum() || c == '_' {
+            len += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    *input = &start[len..];
+    &start[..len]
+}
+
+fn keyword_or_var(ident: &str) -> Token {
+    let lower = ident.to_ascii_lowercase();
+    if let Some(kw) = stat_keyword(&lower) {
+        return Token::Stat(kw);
+    }
+    if let Some(kw) = expr_keyword(ident, &lower) {
+        return kw;
+    }
+    if let Some(kw) = type_keyword(&lower) {
+        return Token::Type(kw);
+    }
+    if let Some(kw) = conditional_keyword(&lower) {
+        return Token::Conditional(kw);
+    }
+    if let Some(kw) = string_keyword(&lower) {
+        return Token::StringKeyword(kw);
+    }
+    Token::Variable(ident.to_string())
+}
+
+fn stat_keyword(s: &str) -> Option<StatKeyword> {
+    Some(match s {
+        "select" => StatKeyword::Select,
+        "group" => StatKeyword::GroupBy,
+        "agg" => StatKeyword::Agg,
+        "filter" => StatKeyword::Filter,
+        "limit" => StatKeyword::Limit,
+        "reverse" => StatKeyword::Reverse,
+        "sort" => StatKeyword::Sort,
+        "join" => StatKeyword::Join,
+        "on" => StatKeyword::On,
+        "left" => StatKeyword::Left,
+        "right" => StatKeyword::Right,
+        "inner" => StatKeyword::Inner,
+        "full" => StatKeyword::Full,
+        "use" => StatKeyword::Use,
+        "clone" => StatKeyword::Clone,
+        _ => return None,
     })
-    .boxed()
+}
+
+fn expr_keyword(_original: &str, lower: &str) -> Option<Token> {
+    let kw = match lower {
+        "sum" => ExprKeyword::Sum,
+        "sqrt" => ExprKeyword::Sqrt,
+        "count" => ExprKeyword::Count,
+        "len" => ExprKeyword::Len,
+        "first" => ExprKeyword::First,
+        "last" => ExprKeyword::Last,
+        "col_sort" => ExprKeyword::Sort,
+        "asc" => ExprKeyword::Asc,
+        "desc" => ExprKeyword::Desc,
+        "col_reverse" => ExprKeyword::Reverse,
+        "mean" => ExprKeyword::Mean,
+        "median" => ExprKeyword::Median,
+        "max" => ExprKeyword::Max,
+        "min" => ExprKeyword::Min,
+        "var" => ExprKeyword::Var,
+        "std" => ExprKeyword::Std,
+        "abs" => ExprKeyword::Abs,
+        "unique" => ExprKeyword::Unique,
+        "by" => ExprKeyword::By,
+        "is" => ExprKeyword::Is,
+        "alias" => ExprKeyword::Alias,
+        "col" => ExprKeyword::Col,
+        "exclude" => ExprKeyword::Exclude,
+        "cast" => ExprKeyword::Cast,
+        "nan" => ExprKeyword::Nan,
+        "all" => ExprKeyword::All,
+        "any" => ExprKeyword::Any,
+        "pow" => ExprKeyword::Pow,
+        "log" => ExprKeyword::Log,
+        _ => return None,
+    };
+    Some(Token::ExprKeyword(kw))
+}
+
+fn type_keyword(s: &str) -> Option<Type> {
+    Some(match s {
+        "str" => Type::Str,
+        "uint" => Type::UInt,
+        "int" => Type::Int,
+        "float" => Type::Float,
+        _ => return None,
+    })
+}
+
+fn conditional_keyword(s: &str) -> Option<Conditional> {
+    Some(match s {
+        "if" => Conditional::If,
+        "then" => Conditional::Then,
+        "else" => Conditional::Else,
+        _ => return None,
+    })
+}
+
+fn string_keyword(s: &str) -> Option<StringKeyword> {
+    Some(match s {
+        "contains" => StringKeyword::Contains,
+        "extract" => StringKeyword::Extract,
+        "split" => StringKeyword::Split,
+        _ => return None,
+    })
+}
+
+fn number_literal(input: &mut &str) -> ModalResult<Literal> {
+    let start = *input;
+    let mut seen_dot = false;
+    let mut len = 0;
+    for c in input.chars() {
+        if c.is_dec_digit() {
+            len += c.len_utf8();
+        } else if c == '.' && !seen_dot {
+            seen_dot = true;
+            len += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if len == 0 {
+        return Err(winnow::error::ErrMode::Backtrack(
+            winnow::error::ContextError::new(),
+        ));
+    }
+    let s = &start[..len];
+    *input = &start[len..];
+    if seen_dot {
+        Ok(Literal::Float(s.to_string()))
+    } else {
+        Ok(Literal::Int(s.to_string()))
+    }
+}
+
+fn parse_string(input: &mut &str) -> ModalResult<String> {
+    let _ = expect_char(input, '"');
+    let mut result = String::new();
+    loop {
+        match input.chars().next() {
+            None => {
+                return Err(winnow::error::ErrMode::Backtrack(
+                    winnow::error::ContextError::new(),
+                ));
+            }
+            Some('"') => {
+                *input = &input[1..];
+                return Ok(result);
+            }
+            Some('\\') => {
+                *input = &input[1..];
+                match input.chars().next() {
+                    None => {
+                        return Err(winnow::error::ErrMode::Backtrack(
+                            winnow::error::ContextError::new(),
+                        ));
+                    }
+                    Some(c) => {
+                        let esc = match c {
+                            '"' => '"',
+                            '\\' => '\\',
+                            '/' => '/',
+                            'b' => '\x08',
+                            'f' => '\x0C',
+                            'n' => '\n',
+                            'r' => '\r',
+                            't' => '\t',
+                            'u' => {
+                                *input = &input[1..];
+                                let hex: String = input.chars().take(4).collect();
+                                if hex.len() < 4 {
+                                    return Err(winnow::error::ErrMode::Backtrack(
+                                        winnow::error::ContextError::new(),
+                                    ));
+                                }
+                                *input = &input[hex.len()..];
+                                let code = u32::from_str_radix(&hex, 16).map_err(|_| {
+                                    winnow::error::ErrMode::Backtrack(
+                                        winnow::error::ContextError::new(),
+                                    )
+                                })?;
+                                char::from_u32(code).ok_or_else(|| {
+                                    winnow::error::ErrMode::Backtrack(
+                                        winnow::error::ContextError::new(),
+                                    )
+                                })?
+                            }
+                            _ => {
+                                return Err(winnow::error::ErrMode::Backtrack(
+                                    winnow::error::ContextError::new(),
+                                ));
+                            }
+                        };
+                        result.push(esc);
+                        *input = &input[c.len_utf8()..];
+                    }
+                }
+            }
+            Some(c) => {
+                result.push(c);
+                *input = &input[c.len_utf8()..];
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -59,27 +364,7 @@ pub enum StatKeyword {
     Inner,
     Full,
     Use,
-}
-fn stat_keyword<'a>() -> impl Parser<'a, &'a str, StatKeyword, extra::Err<Rich<'a, char>>> + Clone {
-    let select = text::keyword("select").to(StatKeyword::Select);
-    let group_by = text::keyword("group").to(StatKeyword::GroupBy);
-    let agg = text::keyword("agg").to(StatKeyword::Agg);
-    let filter = text::keyword("filter").to(StatKeyword::Filter);
-    let limit = text::keyword("limit").to(StatKeyword::Limit);
-    let reverse = text::keyword("reverse").to(StatKeyword::Reverse);
-    let sort = text::keyword("sort").to(StatKeyword::Sort);
-    let join = text::keyword("join").to(StatKeyword::Join);
-    let on = text::keyword("on").to(StatKeyword::On);
-    let full = text::keyword("full").to(StatKeyword::Full);
-    let inner = text::keyword("inner").to(StatKeyword::Inner);
-    let left = text::keyword("left").to(StatKeyword::Left);
-    let right = text::keyword("right").to(StatKeyword::Right);
-    let r#use = text::keyword("use").to(StatKeyword::Use);
-    let join_type = choice((full, inner, left, right));
-    choice((
-        select, group_by, agg, filter, limit, reverse, sort, join, on, join_type, r#use,
-    ))
-    .boxed()
+    Clone,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -96,34 +381,6 @@ pub enum Symbol {
     Pipe,
     Comma,
     Percent,
-}
-fn symbol<'a>() -> impl Parser<'a, &'a str, Symbol, extra::Err<Rich<'a, char>>> + Clone {
-    let left_angle = just('<').to(Symbol::LeftAngle);
-    let right_angle = just('>').to(Symbol::RightAngle);
-    let add = just('+').to(Symbol::Add);
-    let sub = just('-').to(Symbol::Sub);
-    let mul = just('*').to(Symbol::Mul);
-    let div = just('/').to(Symbol::Div);
-    let eq = just('=').to(Symbol::Eq);
-    let ampersand = just('&').to(Symbol::Ampersand);
-    let pipe = just('|').to(Symbol::Pipe);
-    let comma = just(',').to(Symbol::Comma);
-    let bang = just('!').to(Symbol::Bang);
-    let percent = just('%').to(Symbol::Percent);
-    choice((
-        left_angle,
-        right_angle,
-        add,
-        sub,
-        mul,
-        div,
-        eq,
-        ampersand,
-        pipe,
-        comma,
-        bang,
-        percent,
-    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -158,43 +415,6 @@ pub enum ExprKeyword {
     Pow,
     Log,
 }
-fn expr_keyword<'a>() -> impl Parser<'a, &'a str, ExprKeyword, extra::Err<Rich<'a, char>>> + Clone {
-    let sum = text::keyword("sum").to(ExprKeyword::Sum);
-    let sqrt = text::keyword("sqrt").to(ExprKeyword::Sqrt);
-    let count = text::keyword("count").to(ExprKeyword::Count);
-    let len = text::keyword("len").to(ExprKeyword::Len);
-    let sort = text::keyword("col_sort").to(ExprKeyword::Sort);
-    let asc = text::keyword("asc").to(ExprKeyword::Asc);
-    let desc = text::keyword("desc").to(ExprKeyword::Desc);
-    let reverse = text::keyword("col_reverse").to(ExprKeyword::Sort);
-    let first = text::keyword("first").to(ExprKeyword::First);
-    let last = text::keyword("last").to(ExprKeyword::Last);
-    let mean = text::keyword("mean").to(ExprKeyword::Mean);
-    let median = text::keyword("median").to(ExprKeyword::Median);
-    let max = text::keyword("max").to(ExprKeyword::Max);
-    let min = text::keyword("min").to(ExprKeyword::Min);
-    let var = text::keyword("var").to(ExprKeyword::Var);
-    let std = text::keyword("std").to(ExprKeyword::Std);
-    let abs = text::keyword("abs").to(ExprKeyword::Abs);
-    let unique = text::keyword("unique").to(ExprKeyword::Unique);
-    let by = text::keyword("by").to(ExprKeyword::By);
-    let is = text::keyword("is").to(ExprKeyword::Is);
-    let alias = text::keyword("alias").to(ExprKeyword::Alias);
-    let col = text::keyword("col").to(ExprKeyword::Col);
-    let exclude = text::keyword("exclude").to(ExprKeyword::Exclude);
-    let cast = text::keyword("cast").to(ExprKeyword::Cast);
-    let nan = text::keyword("nan").to(ExprKeyword::Nan);
-    let all = text::keyword("all").to(ExprKeyword::All);
-    let any = text::keyword("any").to(ExprKeyword::Any);
-    let pow = text::keyword("pow").to(ExprKeyword::Pow);
-    let log = text::keyword("log").to(ExprKeyword::Log);
-    let a = choice((
-        sum, sqrt, count, len, sort, asc, desc, reverse, first, last, mean, median, max, min, var,
-        std, abs, unique, by, is, alias, col, exclude, cast, nan, all,
-    ));
-    let b = choice((any, pow, log));
-    choice((a, b)).boxed()
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
@@ -204,23 +424,6 @@ pub enum Literal {
     Bool(bool),
     Null,
 }
-fn literal<'a>() -> impl Parser<'a, &'a str, Literal, extra::Err<Rich<'a, char>>> + Clone {
-    let pos_float = text::digits(10)
-        .then(just('.').then(text::digits(10)))
-        .to_slice()
-        .map(ToString::to_string)
-        .map(Literal::Float);
-    let pos_int = text::digits(10)
-        .to_slice()
-        .map(ToString::to_string)
-        .map(Literal::Int);
-    let string = string().map(Literal::String);
-    let bool_true = text::keyword("true").to(Literal::Bool(true));
-    let bool_false = text::keyword("false").to(Literal::Bool(false));
-    let bool = choice((bool_true, bool_false));
-    let null = text::keyword("null").to(Literal::Null);
-    choice((pos_float, pos_int, bool, null, string)).boxed()
-}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Type {
@@ -229,25 +432,12 @@ pub enum Type {
     Int,
     Float,
 }
-fn type_keyword<'a>() -> impl Parser<'a, &'a str, Type, extra::Err<Rich<'a, char>>> + Clone {
-    let str = text::keyword("str").to(Type::Str);
-    let uint = text::keyword("uint").to(Type::UInt);
-    let int = text::keyword("int").to(Type::Int);
-    let float = text::keyword("float").to(Type::Float);
-    choice((str, uint, int, float)).boxed()
-}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Conditional {
     If,
     Then,
     Else,
-}
-fn conditional<'a>() -> impl Parser<'a, &'a str, Conditional, extra::Err<Rich<'a, char>>> + Clone {
-    let when = text::keyword("if").to(Conditional::If);
-    let then = text::keyword("then").to(Conditional::Then);
-    let otherwise = text::keyword("else").to(Conditional::Else);
-    choice((when, then, otherwise)).boxed()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -257,43 +447,84 @@ pub enum StringKeyword {
     All,
     Split,
 }
-fn string_functor<'a>(
-) -> impl Parser<'a, &'a str, StringKeyword, extra::Err<Rich<'a, char>>> + Clone {
-    let contains = text::keyword("contains").to(StringKeyword::Contains);
-    let extract = text::keyword("extract").to(StringKeyword::Extract);
-    let all = text::keyword("all").to(StringKeyword::All);
-    let split = text::keyword("split").to(StringKeyword::Split);
-    choice((contains, extract, all, split)).boxed()
+
+use std::ops::Range;
+
+#[derive(Debug)]
+pub(crate) struct TokenSpan {
+    pub(crate) range: Range<usize>,
+    pub(crate) nested: Vec<TokenSpan>,
 }
 
-/// Ref: <https://github.com/zesterer/chumsky/blob/dce5918bd2dad591ab399d2e191254640a9ed14f/examples/json.rs#L64>
-fn string<'a>() -> impl Parser<'a, &'a str, String, extra::Err<Rich<'a, char>>> + Clone {
-    let escaped = just('\\')
-        .ignore_then(choice((
-            just('\\'),
-            just('/'),
-            just('"'),
-            just('b').to('\x08'),
-            just('f').to('\x0C'),
-            just('n').to('\n'),
-            just('r').to('\r'),
-            just('t').to('\t'),
-            just('u').ignore_then(text::digits(16).exactly(4).to_slice().validate(
-                |digits, e, emitter| {
-                    char::from_u32(u32::from_str_radix(digits, 16).unwrap()).unwrap_or_else(|| {
-                        emitter.emit(Rich::custom(e.span(), "invalid unicode character"));
-                        '\u{FFFD}' // unicode replacement character
-                    })
-                },
-            )),
-        )))
-        .boxed();
+pub(crate) fn token_spans(source: &str, tokens: &[Token]) -> Result<Vec<TokenSpan>, String> {
+    let mut input = source;
+    let mut offset = 0;
+    let spans = spans_for_tokens(&mut input, &mut offset, tokens)?;
+    skip_ws_at(&mut input, &mut offset);
+    if input.is_empty() {
+        Ok(spans)
+    } else {
+        Err(format!("unexpected input {:?}", input))
+    }
+}
 
-    choice((escaped, none_of('"')))
-        .repeated()
-        .collect::<String>()
-        .delimited_by(just('"'), just('"'))
-        .boxed()
+fn spans_for_tokens(
+    input: &mut &str,
+    offset: &mut usize,
+    tokens: &[Token],
+) -> Result<Vec<TokenSpan>, String> {
+    let mut spans = Vec::new();
+    for expected in tokens {
+        skip_ws_at(input, offset);
+        let start = *offset;
+        let nested = match expected {
+            Token::Parens(inner) => {
+                consume_char(input, offset, '(')?;
+                let nested = spans_for_tokens(input, offset, inner)?;
+                skip_ws_at(input, offset);
+                consume_char(input, offset, ')')?;
+                nested
+            }
+            Token::Brackets(inner) => {
+                consume_char(input, offset, '[')?;
+                let nested = spans_for_tokens(input, offset, inner)?;
+                skip_ws_at(input, offset);
+                consume_char(input, offset, ']')?;
+                nested
+            }
+            _ => {
+                let before = input.len();
+                let actual = token(input).map_err(|e| format!("{:?}", e))?;
+                if actual != *expected {
+                    return Err(format!("expected token {:?}, got {:?}", expected, actual));
+                }
+                *offset += before - input.len();
+                Vec::new()
+            }
+        };
+        spans.push(TokenSpan {
+            range: start..*offset,
+            nested,
+        });
+    }
+    Ok(spans)
+}
+
+fn skip_ws_at(input: &mut &str, offset: &mut usize) {
+    let before = input.len();
+    skip_ws(input);
+    *offset += before - input.len();
+}
+
+fn consume_char(input: &mut &str, offset: &mut usize, expected: char) -> Result<(), String> {
+    match input.chars().next() {
+        Some(actual) if actual == expected => {
+            *input = &input[actual.len_utf8()..];
+            *offset += actual.len_utf8();
+            Ok(())
+        }
+        actual => Err(format!("expected {:?}, got {:?}", expected, actual)),
+    }
 }
 
 #[cfg(test)]
@@ -302,18 +533,26 @@ mod tests {
 
     #[test]
     fn test_lexer_empty() {
-        let src = "";
-        let lexer = lexer();
-        let tokens = lexer.parse(src).unwrap();
+        let tokens = lex("").unwrap();
         assert!(tokens.is_empty());
+    }
+
+    #[test]
+    fn rejects_unbalanced_delimiters() {
+        assert_eq!(
+            lex("(a)").unwrap(),
+            [Token::Parens(vec![Token::Variable("a".into())])]
+        );
+        assert!(lex("a)").is_err());
+        assert!(lex("(a").is_err());
+        assert!(lex("[a").is_err());
     }
 
     #[test]
     fn test_lexer() {
         let src =
             r#"select group agg sum count filter alias col [ ] ( ) < > hi + - * / = -42 0.1 "hi""#;
-        let lexer = lexer();
-        let tokens = lexer.parse(src).unwrap();
+        let tokens = lex(src).unwrap();
         assert_eq!(
             tokens,
             [
@@ -345,13 +584,12 @@ mod tests {
 
     #[test]
     fn test_string() {
-        let s = string();
-        let s = s.parse(r#""\\""#).unwrap();
-        assert_eq!(s, r#"\"#);
+        let s = lex(r#""\\""#).unwrap();
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0], Token::Literal(Literal::String(String::from(r#"\"#))));
 
         let src = r#" "\"" "#;
-        let l = lexer();
-        let tokens = l.parse(src).unwrap();
+        let tokens = lex(src).unwrap();
         assert_eq!(tokens.len(), 1);
         let Token::Literal(Literal::String(s)) = &tokens[0] else {
             panic!();
@@ -359,8 +597,7 @@ mod tests {
         assert_eq!(s, r#"""#);
 
         let src = r#" "\\." "#;
-        let l = lexer();
-        let tokens = l.parse(src).unwrap();
+        let tokens = lex(src).unwrap();
         assert_eq!(tokens.len(), 1);
         let Token::Literal(Literal::String(s)) = &tokens[0] else {
             panic!();

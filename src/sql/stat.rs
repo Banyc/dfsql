@@ -1,10 +1,9 @@
-use chumsky::prelude::*;
+use crate::sql::expr::{Expr, can_start_expression, expr, lax_col_name};
 
-use super::{
-    expr::{expr, lax_col_name, Expr},
-    lexer::{Literal, StatKeyword, Token},
-    sort_order, string_token, variable_token, SortOrder, S,
-};
+use crate::sql::TokenParseError;
+use crate::sql::lexer::{ExprKeyword, Literal, StatKeyword, Token};
+
+use crate::sql::{S, SortOrder, Tokens};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stat {
@@ -19,118 +18,245 @@ pub enum Stat {
     Clone(CloneStat),
 }
 
-pub fn parser<'a>() -> impl Parser<'a, &'a [Token], S, extra::Err<Rich<'a, Token>>> + Clone {
-    let select = select_stat().map(Stat::Select);
-    let group_agg = group_agg_stat().map(Stat::GroupAgg);
-    let filter = filter_stat().map(Stat::Filter);
-    let limit = limit_stat().map(Stat::Limit);
-    let reverse = just(Token::Stat(StatKeyword::Reverse)).to(Stat::Reverse);
-    let sort = sort_stat().map(Stat::Sort);
-    let join = join_stat().map(Stat::Join);
-    let r#use = use_stat().map(Stat::Use);
-    let clone = clone_stat().map(Stat::Clone);
-    let stat = choice((
-        select, group_agg, filter, limit, reverse, sort, join, r#use, clone,
-    ));
-
-    stat.repeated()
-        .collect()
-        .map(|statements| S { statements })
-        .boxed()
+pub(crate) fn parse_detailed(tokens: &[Token]) -> Result<S, TokenParseError> {
+    let mut input = tokens;
+    let mut statements = Vec::new();
+    while !input.is_empty() {
+        let token_idx = tokens.len() - input.len();
+        match stat(&mut input) {
+            Ok(s) => statements.push(s),
+            Err(detail) => {
+                return Err(TokenParseError::new(token_idx, detail));
+            }
+        }
+    }
+    Ok(S { statements })
 }
+
+fn stat(input: &mut Tokens<'_>) -> Result<Stat, String> {
+    let saved = *input;
+    // Try clone first (since clone is its own keyword now)
+    if let Ok(s) = clone_stat(input) {
+        return Ok(Stat::Clone(s));
+    }
+    *input = saved;
+    if let Ok(s) = select_stat(input) {
+        return Ok(Stat::Select(s));
+    }
+    *input = saved;
+    if let Ok(s) = group_agg_stat(input) {
+        return Ok(Stat::GroupAgg(s));
+    }
+    *input = saved;
+    if let Ok(s) = filter_stat(input) {
+        return Ok(Stat::Filter(s));
+    }
+    *input = saved;
+    if let Ok(s) = limit_stat(input) {
+        return Ok(Stat::Limit(s));
+    }
+    *input = saved;
+    if let Ok(s) = reverse_stat(input) {
+        return Ok(s);
+    }
+    *input = saved;
+    if let Ok(s) = sort_stat(input) {
+        return Ok(Stat::Sort(s));
+    }
+    *input = saved;
+    if let Ok(s) = join_stat(input) {
+        return Ok(Stat::Join(s));
+    }
+    *input = saved;
+    if let Ok(s) = use_stat(input) {
+        return Ok(Stat::Use(s));
+    }
+    *input = saved;
+    Err(format!("unexpected token {:?}", input.first()))
+}
+
+fn expect_token(input: &mut Tokens<'_>, expected: &Token) -> Result<(), String> {
+    let t = input
+        .first()
+        .ok_or_else(|| format!("expected {expected:?}, got end of input"))?;
+    if *t == *expected {
+        *input = &input[1..];
+        Ok(())
+    } else {
+        Err(format!("expected {expected:?}, got {t:?}"))
+    }
+}
+
+// ---- Select ----
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectStat {
     pub columns: Vec<Expr>,
 }
-fn select_stat<'a>() -> impl Parser<'a, &'a [Token], SelectStat, extra::Err<Rich<'a, Token>>> + Clone
-{
-    just(Token::Stat(StatKeyword::Select))
-        .ignore_then(expr().repeated().collect())
-        .map(|columns| SelectStat { columns })
-        .boxed()
+
+fn select_stat(input: &mut Tokens<'_>) -> Result<SelectStat, String> {
+    expect_token(input, &Token::Stat(StatKeyword::Select))?;
+    let mut columns = Vec::new();
+    while can_start_statement_expression(input) {
+        columns.push(expr(input)?);
+    }
+    Ok(SelectStat { columns })
 }
+
+// ---- GroupAgg ----
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GroupAggStat {
     pub group_by: Vec<String>,
     pub agg: Vec<Expr>,
 }
-fn group_agg_stat<'a>(
-) -> impl Parser<'a, &'a [Token], GroupAggStat, extra::Err<Rich<'a, Token>>> + Clone {
-    // let columns =
-    //     column_names().nested_in(select_ref! { Token::Stat(StatKeyword::Brackets)(columns) => columns.as_slice() });
-    let columns = column_names();
 
-    just(Token::Stat(StatKeyword::GroupBy))
-        .ignore_then(columns)
-        .then_ignore(just(Token::Stat(StatKeyword::Agg)))
-        .then(expr().repeated().collect())
-        .map(|(group_by, agg)| GroupAggStat { group_by, agg })
-        .boxed()
+fn group_agg_stat(input: &mut Tokens<'_>) -> Result<GroupAggStat, String> {
+    expect_token(input, &Token::Stat(StatKeyword::GroupBy))?;
+    let group_by = column_names(input)?;
+    expect_token(input, &Token::Stat(StatKeyword::Agg))?;
+    let mut agg = Vec::new();
+    while can_start_statement_expression(input) {
+        agg.push(expr(input)?);
+    }
+    Ok(GroupAggStat { group_by, agg })
 }
 
-fn column_names<'a>(
-) -> impl Parser<'a, &'a [Token], Vec<String>, extra::Err<Rich<'a, Token>>> + Clone {
-    let column = choice((lax_col_name(), string_token()));
-    column.repeated().collect().boxed()
+fn column_names(input: &mut Tokens<'_>) -> Result<Vec<String>, String> {
+    let mut names = Vec::new();
+    loop {
+        match input.first() {
+            Some(Token::ExprKeyword(ExprKeyword::Col)) => {
+                names.push(lax_col_name(input)?);
+            }
+            Some(Token::Variable(name)) | Some(Token::Literal(Literal::String(name))) => {
+                names.push(name.clone());
+                *input = &input[1..];
+            }
+            _ => return Ok(names),
+        }
+    }
 }
+
+// ---- Filter ----
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FilterStat {
     pub condition: Expr,
 }
-fn filter_stat<'a>() -> impl Parser<'a, &'a [Token], FilterStat, extra::Err<Rich<'a, Token>>> + Clone
-{
-    just(Token::Stat(StatKeyword::Filter))
-        .ignore_then(expr())
-        .map(|condition| FilterStat { condition })
-        .boxed()
+
+fn filter_stat(input: &mut Tokens<'_>) -> Result<FilterStat, String> {
+    expect_token(input, &Token::Stat(StatKeyword::Filter))?;
+    let condition = expr(input)?;
+    Ok(FilterStat { condition })
 }
+
+// ---- Limit ----
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LimitStat {
     pub rows: String,
 }
-fn limit_stat<'a>() -> impl Parser<'a, &'a [Token], LimitStat, extra::Err<Rich<'a, Token>>> + Clone
-{
-    just(Token::Stat(StatKeyword::Limit))
-        .ignore_then(select_ref! { Token::Literal(Literal::Int(rows)) => rows.clone() })
-        .map(|rows| LimitStat { rows })
-        .boxed()
+
+fn limit_stat(input: &mut Tokens<'_>) -> Result<LimitStat, String> {
+    expect_token(input, &Token::Stat(StatKeyword::Limit))?;
+    let t = input
+        .first()
+        .ok_or("expected integer literal after limit")?;
+    match t {
+        Token::Literal(Literal::Int(rows)) => {
+            let rows = rows.clone();
+            *input = &input[1..];
+            Ok(LimitStat { rows })
+        }
+        _ => Err(format!("expected integer, got {t:?}")),
+    }
 }
+
+// ---- Reverse ----
+
+fn reverse_stat(input: &mut Tokens<'_>) -> Result<Stat, String> {
+    expect_token(input, &Token::Stat(StatKeyword::Reverse))?;
+    Ok(Stat::Reverse)
+}
+
+// ---- Sort ----
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SortStat {
     pub pairs: Vec<(SortOrder, String)>,
 }
-fn sort_stat<'a>() -> impl Parser<'a, &'a [Token], SortStat, extra::Err<Rich<'a, Token>>> + Clone {
-    let name = choice((lax_col_name(), string_token()));
-    let pair = sort_order().then(name);
-    just(Token::Stat(StatKeyword::Sort))
-        .ignore_then(pair.repeated().collect())
-        .map(|pairs| SortStat { pairs })
-        .boxed()
+
+fn sort_stat(input: &mut Tokens<'_>) -> Result<SortStat, String> {
+    expect_token(input, &Token::Stat(StatKeyword::Sort))?;
+    let mut pairs = Vec::new();
+    while !input.is_empty() && can_start_column_name(input.first()) {
+        let order = sort_order(input)?;
+        let name = column_name(input)?;
+        pairs.push((order, name));
+    }
+    Ok(SortStat { pairs })
 }
+
+fn sort_order(input: &mut Tokens<'_>) -> Result<SortOrder, String> {
+    Ok(match input.first() {
+        Some(Token::ExprKeyword(ExprKeyword::Asc)) => {
+            *input = &input[1..];
+            SortOrder::Asc
+        }
+        Some(Token::ExprKeyword(ExprKeyword::Desc)) => {
+            *input = &input[1..];
+            SortOrder::Desc
+        }
+        _ => SortOrder::Asc,
+    })
+}
+
+fn column_name(input: &mut Tokens<'_>) -> Result<String, String> {
+    match input.first() {
+        Some(Token::Variable(s)) => {
+            let s = s.clone();
+            *input = &input[1..];
+            Ok(s)
+        }
+        Some(Token::Literal(Literal::String(s))) => {
+            let s = s.clone();
+            *input = &input[1..];
+            Ok(s)
+        }
+        Some(Token::ExprKeyword(ExprKeyword::Col)) => lax_col_name(input),
+        _ => Err(format!("expected column name, got {:?}", input.first())),
+    }
+}
+
+fn can_start_column_name(t: Option<&Token>) -> bool {
+    matches!(
+        t,
+        Some(Token::Variable(_))
+            | Some(Token::Literal(Literal::String(_)))
+            | Some(Token::ExprKeyword(ExprKeyword::Col))
+    )
+}
+
+// ---- Join ----
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum JoinStat {
     SingleCol(SingleColJoinStat),
 }
-fn join_stat<'a>() -> impl Parser<'a, &'a [Token], JoinStat, extra::Err<Rich<'a, Token>>> + Clone {
-    let single_col = single_col_join_stat().map(JoinStat::SingleCol);
-    choice((single_col,)).boxed()
+
+fn join_stat(input: &mut Tokens<'_>) -> Result<JoinStat, String> {
+    single_col_join_stat(input).map(JoinStat::SingleCol)
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SingleColJoinStat {
     pub other: String,
     pub ty: SingleColJoinType,
-    // pub left_on: Vec<Expr>,
-    // pub right_on: Vec<Expr>,
     pub left_on: Expr,
     pub right_on: Option<Expr>,
 }
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SingleColJoinType {
     Left,
@@ -138,122 +264,171 @@ pub enum SingleColJoinType {
     Inner,
     Full,
 }
-fn single_col_join_stat<'a>(
-) -> impl Parser<'a, &'a [Token], SingleColJoinStat, extra::Err<Rich<'a, Token>>> + Clone {
-    let left = just(Token::Stat(StatKeyword::Left)).to(SingleColJoinType::Left);
-    let right = just(Token::Stat(StatKeyword::Right)).to(SingleColJoinType::Right);
-    let inner = just(Token::Stat(StatKeyword::Inner)).to(SingleColJoinType::Inner);
-    let full = just(Token::Stat(StatKeyword::Full)).to(SingleColJoinType::Full);
-    let ty = choice((left, right, inner, full));
-    // let on = just(Token::Stat(StatKeyword::On)).ignore_then(expr().repeated().collect());
-    let on = just(Token::Stat(StatKeyword::On))
-        .ignore_then(expr())
-        .then(expr().or_not());
-    ty.then_ignore(just(Token::Stat(StatKeyword::Join)))
-        .then(variable_token())
-        .then(on.clone())
-        .map(|((ty, other), (left_on, right_on))| SingleColJoinStat {
-            other,
-            ty,
-            left_on,
-            right_on,
-        })
-        .boxed()
+
+fn single_col_join_stat(input: &mut Tokens<'_>) -> Result<SingleColJoinStat, String> {
+    let ty = match input.first() {
+        Some(Token::Stat(StatKeyword::Left)) => {
+            *input = &input[1..];
+            SingleColJoinType::Left
+        }
+        Some(Token::Stat(StatKeyword::Right)) => {
+            *input = &input[1..];
+            SingleColJoinType::Right
+        }
+        Some(Token::Stat(StatKeyword::Inner)) => {
+            *input = &input[1..];
+            SingleColJoinType::Inner
+        }
+        Some(Token::Stat(StatKeyword::Full)) => {
+            *input = &input[1..];
+            SingleColJoinType::Full
+        }
+        _ => return Err("expected join type (left/right/inner/full)".to_string()),
+    };
+    expect_token(input, &Token::Stat(StatKeyword::Join))?;
+    let t = input.first().ok_or("expected table name after join type")?;
+    let other = match t {
+        Token::Variable(s) => s.clone(),
+        _ => return Err(format!("expected table name, got {t:?}")),
+    };
+    *input = &input[1..];
+    expect_token(input, &Token::Stat(StatKeyword::On))?;
+    let left_on = expr(input)?;
+    let right_on = if can_start_statement_expression(input) {
+        Some(expr(input)?)
+    } else {
+        None
+    };
+    Ok(SingleColJoinStat {
+        other,
+        ty,
+        left_on,
+        right_on,
+    })
 }
+
+// ---- Use ----
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UseStat {
     pub df_name: String,
 }
-fn use_stat<'a>() -> impl Parser<'a, &'a [Token], UseStat, extra::Err<Rich<'a, Token>>> + Clone {
-    just(Token::Stat(StatKeyword::Use))
-        .ignore_then(variable_token())
-        .map(|df_name| UseStat { df_name })
-        .boxed()
+
+fn use_stat(input: &mut Tokens<'_>) -> Result<UseStat, String> {
+    expect_token(input, &Token::Stat(StatKeyword::Use))?;
+    let t = input.first().ok_or("expected dataframe name after use")?;
+    match t {
+        Token::Variable(name) => {
+            let name = name.clone();
+            *input = &input[1..];
+            Ok(UseStat { df_name: name })
+        }
+        _ => Err(format!("expected variable, got {t:?}")),
+    }
 }
+
+// ---- Clone ----
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CloneStat {
     pub df_name: String,
 }
-fn clone_stat<'a>() -> impl Parser<'a, &'a [Token], CloneStat, extra::Err<Rich<'a, Token>>> + Clone
-{
-    just(Token::Stat(StatKeyword::Use))
-        .ignore_then(variable_token())
-        .map(|df_name| CloneStat { df_name })
-        .boxed()
+
+fn clone_stat(input: &mut Tokens<'_>) -> Result<CloneStat, String> {
+    expect_token(input, &Token::Stat(StatKeyword::Clone))?;
+    let t = input.first().ok_or("expected dataframe name after clone")?;
+    match t {
+        Token::Variable(name) => {
+            let name = name.clone();
+            *input = &input[1..];
+            Ok(CloneStat { df_name: name })
+        }
+        _ => Err(format!("expected variable, got {t:?}")),
+    }
+}
+
+// ---- Sort boundary probe ----
+
+pub(crate) fn can_start_statement_expression(input: &Tokens<'_>) -> bool {
+    match input.first() {
+        Some(Token::Stat(StatKeyword::Sort)) => {
+            let mut probe = *input;
+            expr(&mut probe).is_ok()
+        }
+        Some(Token::Stat(_)) => false,
+        token => can_start_expression(token),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::sql::{
-        expr::{BinaryExpr, BinaryOperator, ExcludeExpr, UnaryExpr, UnaryOperator},
-        lexer::lexer,
-    };
-
     use super::*;
 
     #[test]
     fn test_select_expr() {
         let src = r#"select col a exclude b col c"#;
-        let lexer = lexer();
-        let tokens = lexer.parse(src).unwrap();
-        let parser = select_stat();
-        let expr = parser.parse(&tokens).unwrap();
+        let s = crate::sql::parse(src).unwrap();
         assert_eq!(
-            expr,
-            SelectStat {
+            s.statements,
+            vec![Stat::Select(SelectStat {
                 columns: vec![
                     Expr::Col(String::from("a")),
-                    Expr::Exclude(ExcludeExpr {
+                    Expr::Exclude(crate::sql::expr::ExcludeExpr {
                         columns: vec![String::from("b"), String::from("c")],
                     }),
                 ]
-            }
+            })]
         );
     }
 
     #[test]
     fn test_group_agg_stat() {
         let src = r#"group col "foo" "bar" agg sum col "foo" count col "bar""#;
-        let lexer = lexer();
-        let tokens = lexer.parse(src).unwrap();
-        let parser = group_agg_stat();
-        let stat = parser.parse(&tokens).unwrap();
+        let s = crate::sql::parse(src).unwrap();
         assert_eq!(
-            stat,
-            GroupAggStat {
+            s.statements,
+            vec![Stat::GroupAgg(GroupAggStat {
                 group_by: vec![String::from("foo"), String::from("bar")],
                 agg: vec![
-                    Expr::Unary(Box::new(UnaryExpr {
-                        operator: UnaryOperator::Sum,
+                    Expr::Unary(Box::new(crate::sql::expr::UnaryExpr {
+                        operator: crate::sql::expr::UnaryOperator::Sum,
                         expr: Expr::Col(String::from("foo")),
                     })),
-                    Expr::Unary(Box::new(UnaryExpr {
-                        operator: UnaryOperator::Count,
+                    Expr::Unary(Box::new(crate::sql::expr::UnaryExpr {
+                        operator: crate::sql::expr::UnaryOperator::Count,
                         expr: Expr::Col(String::from("bar")),
                     })),
                 ],
-            }
+            })]
         );
     }
 
     #[test]
     fn test_filter_stat() {
         let src = r#"filter col "foo" = 42"#;
-        let lexer = lexer();
-        let tokens = lexer.parse(src).unwrap();
-        let parser = filter_stat();
-        let stat = parser.parse(&tokens).unwrap();
+        let s = crate::sql::parse(src).unwrap();
         assert_eq!(
-            stat,
-            FilterStat {
-                condition: Expr::Binary(Box::new(BinaryExpr {
-                    operator: BinaryOperator::Eq,
+            s.statements,
+            vec![Stat::Filter(FilterStat {
+                condition: Expr::Binary(Box::new(crate::sql::expr::BinaryExpr {
+                    operator: crate::sql::expr::BinaryOperator::Eq,
                     left: Expr::Col(String::from("foo")),
                     right: Expr::Literal(Literal::Int(String::from("42"))),
                 })),
-            }
+            })]
         );
+    }
+
+    #[test]
+    fn distinguishes_sort_expression_from_statement() {
+        let parsed = crate::sql::parse("select sort value by order").unwrap();
+        assert!(
+            matches!(parsed.statements.as_slice(), [Stat::Select(SelectStat { columns })] if matches!(columns.as_slice(), [Expr::SortBy(_)]))
+        );
+        let parsed = crate::sql::parse("select id sort id").unwrap();
+        assert!(matches!(
+            parsed.statements.as_slice(),
+            [Stat::Select(_), Stat::Sort(_)]
+        ));
     }
 }
