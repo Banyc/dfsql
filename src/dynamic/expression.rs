@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use crate::sql::expr::{BinaryOperator, Expr, StandaloneOperator};
+use crate::sql::expr::{BinaryOperator, Expr, StandaloneOperator, UnaryOperator};
 use crate::sql::lexer::Literal;
 
 use super::value::Number;
@@ -103,6 +103,15 @@ pub(crate) fn evaluate_shaped(frame: &Frame, expression: &Expr) -> Result<Evalua
             let right = evaluate_shaped(frame, &value.right)?;
             let result = apply_binary(value.operator, left, right)?;
             (result.column, result.shape)
+        }
+        Expr::Unary(value) => {
+            let inner = evaluate_shaped(frame, &value.expr)?;
+            let shape = if is_reduction(value.operator.clone()) {
+                Shape::Scalar
+            } else {
+                inner.shape
+            };
+            (apply_unary(value.operator.clone(), inner.column)?, shape)
         }
         Expr::Alias(value) => {
             let evaluated = evaluate_shaped(frame, &value.expr)?;
@@ -295,6 +304,119 @@ fn invalid_value(operation: &'static str, value: impl ToString) -> Error {
     }
 }
 
+fn is_reduction(operator: UnaryOperator) -> bool {
+    matches!(
+        operator,
+        UnaryOperator::Sum | UnaryOperator::Count | UnaryOperator::First | UnaryOperator::Last
+    )
+}
+
+fn apply_unary(operator: UnaryOperator, column: Column) -> Result<Column> {
+    match operator {
+        UnaryOperator::Sum => reduce_sum(column),
+        UnaryOperator::Count => Ok(Column::new(
+            column.name(),
+            vec![
+                column
+                    .iter()
+                    .filter(|val| !matches!(val, Value::Null))
+                    .count() as u64,
+            ],
+        )),
+        UnaryOperator::First => reduce_edge(column, false),
+        UnaryOperator::Last => reduce_edge(column, true),
+        UnaryOperator::Reverse => {
+            let name = column.name().to_owned();
+            Ok(Column::from_values(name, column.iter().rev().collect()))
+        }
+        UnaryOperator::Sqrt => map_column(column, |val| {
+            Ok(Value::Float(
+                val.number("sqrt")?
+                    .expect("null handled by map")
+                    .as_f64()
+                    .sqrt(),
+            ))
+        }),
+        UnaryOperator::Abs => map_column(column, absolute),
+        UnaryOperator::Neg => map_column(column, negate),
+        UnaryOperator::Not => map_column(column, |val| {
+            Ok(Value::Bool(!val.bool("not")?.expect("null handled by map")))
+        }),
+        UnaryOperator::IsNull => map_all(column, |val| Ok(Value::Bool(matches!(val, Value::Null)))),
+        UnaryOperator::IsNan => map_all(column, |val| {
+            Ok(Value::Bool(matches!(val, Value::Float(v) if v.is_nan())))
+        }),
+        unsupported => Err(Error::InvalidValue {
+            operation: "unary",
+            value: format!("{unsupported:?}"),
+        }),
+    }
+}
+
+fn map_column(column: Column, mut function: impl FnMut(&Value) -> Result<Value>) -> Result<Column> {
+    map_all(column, |val| {
+        if matches!(val, Value::Null) {
+            Ok(Value::Null)
+        } else {
+            function(val)
+        }
+    })
+}
+
+fn map_all(column: Column, mut function: impl FnMut(&Value) -> Result<Value>) -> Result<Column> {
+    let name = column.name().to_owned();
+    Ok(Column::from_values(
+        name,
+        column
+            .iter()
+            .map(|val| function(&val))
+            .collect::<Result<_>>()?,
+    ))
+}
+
+fn absolute(value: &Value) -> Result<Value> {
+    Ok(match value {
+        Value::UInt(value) => Value::UInt(*value),
+        Value::Int(value) => Value::Int(value.wrapping_abs()),
+        Value::Float(value) => Value::Float(value.abs()),
+        value => return Err(value.invalid_type("abs")),
+    })
+}
+
+fn negate(value: &Value) -> Result<Value> {
+    Ok(match value {
+        Value::UInt(value) => Value::Int(-(*value as i64)),
+        Value::Int(value) => Value::Int(value.wrapping_neg()),
+        Value::Float(value) => Value::Float(-value),
+        value => return Err(value.invalid_type("negate")),
+    })
+}
+
+fn reduce_sum(column: Column) -> Result<Column> {
+    let name = column.name().to_owned();
+    let value = column
+        .iter()
+        .filter(|val| !matches!(val, Value::Null))
+        .try_fold(None, |sum, val| {
+            sum.map_or(Ok(Some(val.clone())), |s| {
+                binary_value(BinaryOperator::Add, &s, &val).map(Some)
+            })
+        })?
+        .unwrap_or_default();
+    Ok(Column::from_values(name, vec![value]))
+}
+
+fn reduce_edge(column: Column, last: bool) -> Result<Column> {
+    let mut values = column.iter().filter(|val| !matches!(val, Value::Null));
+    let value = if last {
+        values.next_back()
+    } else {
+        values.next()
+    }
+    .unwrap_or_default();
+    Ok(Column::from_values(column.name(), vec![value]))
+}
+
 pub(crate) fn select(frame: &Frame, expressions: &[Expr]) -> Result<Frame> {
     let evaluated = expressions
         .iter()
@@ -317,7 +439,9 @@ pub(crate) fn select(frame: &Frame, expressions: &[Expr]) -> Result<Frame> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sql::expr::{AliasExpr, BinaryExpr, BinaryOperator, StandaloneExpr};
+    use crate::sql::expr::{
+        AliasExpr, BinaryExpr, BinaryOperator, StandaloneExpr, UnaryExpr, UnaryOperator,
+    };
 
     fn binary(operator: BinaryOperator, left: Expr, right: Expr) -> Expr {
         Expr::Binary(Box::new(BinaryExpr {
@@ -325,6 +449,10 @@ mod tests {
             left,
             right,
         }))
+    }
+
+    fn unary(operator: UnaryOperator, expr: Expr) -> Expr {
+        Expr::Unary(Box::new(UnaryExpr { operator, expr }))
     }
 
     #[test]
@@ -489,6 +617,156 @@ mod tests {
                 operation: "expression",
                 left: 2,
                 right: 3
+            }
+        );
+    }
+
+    #[test]
+    fn unary_reverse_preserves_shape_and_propagates_null() {
+        let frame = Frame::new(vec![Column::new("a", vec![Some(1_i64), None, Some(3)])]).unwrap();
+        let result = select(
+            &frame,
+            &[unary(UnaryOperator::Reverse, Expr::Col("a".into()))],
+        )
+        .unwrap();
+        let col = result.column("a").unwrap();
+        assert_eq!(result.height(), 3);
+        assert_eq!(
+            col.values(),
+            vec![Value::Int(3), Value::Null, Value::Int(1)]
+        );
+    }
+
+    #[test]
+    fn unary_boolean_not_validates_type() {
+        let frame =
+            Frame::new(vec![Column::new("a", vec![Some(true), None, Some(false)])]).unwrap();
+        let result = select(&frame, &[unary(UnaryOperator::Not, Expr::Col("a".into()))]).unwrap();
+        assert_eq!(
+            result.column("a").unwrap().values(),
+            vec![Value::Bool(false), Value::Null, Value::Bool(true)]
+        );
+
+        let frame = Frame::new(vec![Column::new("a", vec![1_i64])]).unwrap();
+        let err = select(&frame, &[unary(UnaryOperator::Not, Expr::Col("a".into()))]).unwrap_err();
+        assert_eq!(
+            err,
+            Error::InvalidType {
+                operation: "not",
+                kind: "int"
+            }
+        );
+    }
+
+    #[test]
+    fn unary_null_and_nan_predicates_do_not_propagate_null() {
+        use crate::dynamic::Value;
+        let frame = Frame::new(vec![Column::new(
+            "a",
+            vec![Value::Null, Value::Int(1), Value::Float(f64::NAN)],
+        )])
+        .unwrap();
+        let result = select(
+            &frame,
+            &[unary(UnaryOperator::IsNull, Expr::Col("a".into()))],
+        )
+        .unwrap();
+        assert_eq!(
+            result.column("a").unwrap().values(),
+            vec![Value::Bool(true), Value::Bool(false), Value::Bool(false)]
+        );
+
+        let frame = Frame::new(vec![Column::new(
+            "a",
+            vec![Value::Null, Value::Int(1), Value::Float(f64::NAN)],
+        )])
+        .unwrap();
+        let result = select(
+            &frame,
+            &[unary(UnaryOperator::IsNan, Expr::Col("a".into()))],
+        )
+        .unwrap();
+        assert_eq!(
+            result.column("a").unwrap().values(),
+            vec![Value::Bool(false), Value::Bool(false), Value::Bool(true)]
+        );
+    }
+
+    #[test]
+    fn simple_reductions_ignore_nulls_and_become_scalars() {
+        let frame = Frame::new(vec![Column::new(
+            "a",
+            vec![
+                Value::Null,
+                Value::Int(1),
+                Value::Null,
+                Value::Int(3),
+                Value::Null,
+            ],
+        )])
+        .unwrap();
+
+        let result = select(&frame, &[unary(UnaryOperator::Sum, Expr::Col("a".into()))]).unwrap();
+        assert_eq!(result.height(), 1);
+        assert_eq!(result.column("a").unwrap().get(0), Some(Value::Int(4)));
+
+        let result = select(
+            &frame,
+            &[unary(UnaryOperator::Count, Expr::Col("a".into()))],
+        )
+        .unwrap();
+        assert_eq!(result.column("a").unwrap().get(0), Some(Value::UInt(2)));
+
+        let result = select(
+            &frame,
+            &[unary(UnaryOperator::First, Expr::Col("a".into()))],
+        )
+        .unwrap();
+        assert_eq!(result.column("a").unwrap().get(0), Some(Value::Int(1)));
+
+        let result = select(&frame, &[unary(UnaryOperator::Last, Expr::Col("a".into()))]).unwrap();
+        assert_eq!(result.column("a").unwrap().get(0), Some(Value::Int(3)));
+    }
+
+    #[test]
+    fn empty_reductions_have_defined_results() {
+        let frame = Frame::new(vec![Column::new(
+            "a",
+            vec![Value::Null, Value::Null, Value::Null],
+        )])
+        .unwrap();
+
+        let result = select(&frame, &[unary(UnaryOperator::Sum, Expr::Col("a".into()))]).unwrap();
+        assert_eq!(result.column("a").unwrap().get(0), Some(Value::Null));
+
+        let result = select(
+            &frame,
+            &[unary(UnaryOperator::First, Expr::Col("a".into()))],
+        )
+        .unwrap();
+        assert_eq!(result.column("a").unwrap().get(0), Some(Value::Null));
+
+        let result = select(&frame, &[unary(UnaryOperator::Last, Expr::Col("a".into()))]).unwrap();
+        assert_eq!(result.column("a").unwrap().get(0), Some(Value::Null));
+
+        let result = select(
+            &frame,
+            &[unary(UnaryOperator::Count, Expr::Col("a".into()))],
+        )
+        .unwrap();
+        assert_eq!(result.column("a").unwrap().get(0), Some(Value::UInt(0)));
+    }
+
+    #[test]
+    fn advanced_unary_is_explicitly_deferred() {
+        let frame = Frame::new(vec![Column::new("a", vec![1_i64])]).unwrap();
+        let err = evaluate_shaped(&frame, &unary(UnaryOperator::Mean, Expr::Col("a".into())))
+            .unwrap_err();
+        assert_eq!(
+            err,
+            Error::InvalidValue {
+                operation: "unary",
+                value: "Mean".into()
             }
         );
     }
