@@ -1,6 +1,6 @@
 [package]
 name = "dfsql"
-version = "0.15.1"
+version = "0.16.0"
 edition = "2024"
 description = "SQL REPL for Data Frames"
 license = "MIT"
@@ -13,7 +13,7 @@ anyhow = { version = "1", optional = true }
 banyc_polars_util = { version = "0.7", optional = true }
 winnow = "1"
 clap = { version = "4", features = ["derive"], optional = true }
-fancy-regex = { version = "0.14", optional = true }
+fancy-regex = { version = "0.18", optional = true }
 polars = { version = "0.47", features = [
     "abs",
     "lazy",
@@ -25,12 +25,11 @@ polars = { version = "0.47", features = [
     "dtype-i128",
 ], optional = true }
 regex = "1"
-rustyline = { version = "15", features = ["derive"], optional = true }
+rustyline = { version = "18", features = ["derive"], optional = true }
 thiserror = "2"
 
 [features]
 default = []
-dynamic-backend = []
 polars-backend = ["dep:polars"]
 cli = ["anyhow", "clap", "fancy-regex", "banyc_polars_util", "rustyline", "polars-backend"]
 
