@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
 use crate::sql::expr::{
-    BinaryOperator, CastExpr, ConditionalExpr, Expr, StandaloneOperator, UnaryOperator,
+    BinaryOperator, CastExpr, ConditionalExpr, Expr, StandaloneOperator, StrExpr, UnaryOperator,
 };
 use crate::sql::lexer::{Literal, Type};
 
@@ -85,12 +85,135 @@ fn literal_value(literal: &Literal) -> Result<Value> {
 pub(crate) fn expression_name(expression: &Expr) -> String {
     match expression {
         Expr::Col(name) => name.clone(),
+        Expr::Exclude(_) => "*".into(),
         Expr::Literal(_) => "literal".into(),
+        Expr::Binary(value) => expression_name(&value.left),
+        Expr::Unary(value) => expression_name(&value.expr),
         Expr::Alias(value) => value.name.clone(),
         Expr::Conditional(value) => expression_name(&value.first_case.then),
         Expr::Cast(value) => expression_name(&value.expr),
+        Expr::Log(value) => expression_name(&value.expr),
+        Expr::Str(value) => expression_name(string_parts(value).0),
         Expr::Standalone(_) => "len".into(),
-        _ => "expression".into(),
+        Expr::SortBy(value) => expression_name(&value.expr),
+        Expr::Sort(value) => expression_name(&value.expr),
+    }
+}
+
+pub(crate) fn expand_selectors(
+    frame: &Frame,
+    expressions: &[Expr],
+    excluded: &[String],
+) -> Vec<Expr> {
+    expressions
+        .iter()
+        .flat_map(|expression| {
+            if !has_selector(expression) {
+                return vec![expression.clone()];
+            }
+            frame
+                .columns()
+                .iter()
+                .filter(|column| !excluded.iter().any(|name| name == column.name()))
+                .filter_map(|column| {
+                    let mut expression = expression.clone();
+                    bind_selector(&mut expression, column.name()).then_some(expression)
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn has_selector(expression: &Expr) -> bool {
+    match expression {
+        Expr::Col(name) => name == "*",
+        Expr::Exclude(_) => true,
+        Expr::Literal(_) | Expr::Standalone(_) => false,
+        Expr::Binary(value) => has_selector(&value.left) || has_selector(&value.right),
+        Expr::Unary(value) => has_selector(&value.expr),
+        Expr::Alias(value) => has_selector(&value.expr),
+        Expr::Conditional(value) => {
+            has_selector(&value.first_case.when)
+                || has_selector(&value.first_case.then)
+                || value
+                    .other_cases
+                    .iter()
+                    .any(|case| has_selector(&case.when) || has_selector(&case.then))
+                || has_selector(&value.otherwise)
+        }
+        Expr::Cast(value) => has_selector(&value.expr),
+        Expr::Log(value) => has_selector(&value.expr),
+        Expr::Str(value) => {
+            let (string, pattern) = string_parts(value);
+            has_selector(string) || has_selector(pattern)
+        }
+        Expr::SortBy(value) => {
+            has_selector(&value.expr) || value.pairs.iter().any(|(_, value)| has_selector(value))
+        }
+        Expr::Sort(value) => has_selector(&value.expr),
+    }
+}
+
+fn bind_selector(expression: &mut Expr, column: &str) -> bool {
+    match expression {
+        Expr::Col(name) if name == "*" => {
+            *name = column.into();
+            true
+        }
+        Expr::Exclude(value) => {
+            if value.columns.iter().any(|name| name == column) {
+                false
+            } else {
+                *expression = Expr::Col(column.into());
+                true
+            }
+        }
+        Expr::Col(_) | Expr::Literal(_) | Expr::Standalone(_) => true,
+        Expr::Binary(value) => {
+            bind_selector(&mut value.left, column) && bind_selector(&mut value.right, column)
+        }
+        Expr::Unary(value) => bind_selector(&mut value.expr, column),
+        Expr::Alias(value) => bind_selector(&mut value.expr, column),
+        Expr::Conditional(value) => {
+            bind_selector(&mut value.first_case.when, column)
+                && bind_selector(&mut value.first_case.then, column)
+                && value.other_cases.iter_mut().all(|case| {
+                    bind_selector(&mut case.when, column) && bind_selector(&mut case.then, column)
+                })
+                && bind_selector(&mut value.otherwise, column)
+        }
+        Expr::Cast(value) => bind_selector(&mut value.expr, column),
+        Expr::Log(value) => bind_selector(&mut value.expr, column),
+        Expr::Str(value) => {
+            let (string, pattern) = string_parts_mut(value);
+            bind_selector(string, column) && bind_selector(pattern, column)
+        }
+        Expr::SortBy(value) => {
+            bind_selector(&mut value.expr, column)
+                && value
+                    .pairs
+                    .iter_mut()
+                    .all(|(_, value)| bind_selector(value, column))
+        }
+        Expr::Sort(value) => bind_selector(&mut value.expr, column),
+    }
+}
+
+fn string_parts(expression: &StrExpr) -> (&Expr, &Expr) {
+    match expression {
+        StrExpr::Contains(value) => (&value.str, &value.pattern),
+        StrExpr::Extract(value) => (&value.str, &value.pattern),
+        StrExpr::ExtractAll(value) => (&value.str, &value.pattern),
+        StrExpr::Split(value) => (&value.str, &value.pattern),
+    }
+}
+
+fn string_parts_mut(expression: &mut StrExpr) -> (&mut Expr, &mut Expr) {
+    match expression {
+        StrExpr::Contains(value) => (&mut value.str, &mut value.pattern),
+        StrExpr::Extract(value) => (&mut value.str, &mut value.pattern),
+        StrExpr::ExtractAll(value) => (&mut value.str, &mut value.pattern),
+        StrExpr::Split(value) => (&mut value.str, &mut value.pattern),
     }
 }
 
@@ -617,30 +740,30 @@ fn cast_value(value: &Value, ty: Type) -> Result<Value> {
 }
 
 pub(crate) fn select(frame: &Frame, expressions: &[Expr]) -> Result<Frame> {
-    let evaluated = expressions
+    let values = expand_selectors(frame, expressions, &[])
         .iter()
         .map(|expression| evaluate_shaped(frame, expression))
         .collect::<Result<Vec<_>>>()?;
-    let height = if evaluated.is_empty() {
+    let height = if values.is_empty() {
         0
-    } else if evaluated.iter().any(|val| val.shape == Shape::Rows) {
-        frame.height()
     } else {
-        1
+        combined_len("select", values.iter())?
     };
-    let columns = evaluated
-        .into_iter()
-        .map(|val| val.materialize(height, "select"))
-        .collect::<Result<Vec<_>>>()?;
-    Frame::with_height(columns, height)
+    Frame::with_height(
+        values
+            .into_iter()
+            .map(|value| value.materialize(height, "select"))
+            .collect::<Result<Vec<_>>>()?,
+        height,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sql::expr::{
-        AliasExpr, BinaryExpr, BinaryOperator, ConditionalCase, StandaloneExpr, UnaryExpr,
-        UnaryOperator,
+        AliasExpr, BinaryExpr, BinaryOperator, ConditionalCase, ExcludeExpr, StandaloneExpr,
+        UnaryExpr, UnaryOperator,
     };
 
     fn binary(operator: BinaryOperator, left: Expr, right: Expr) -> Expr {
@@ -1211,6 +1334,69 @@ mod tests {
                 operation: "cast",
                 value: "not-a-number".into()
             }
+        );
+    }
+
+    #[test]
+    fn selector_expansion_preserves_order_and_honors_exclusions() {
+        let frame = Frame::new(vec![
+            Column::new("a", [1_i64, 2]),
+            Column::new("b", [3_i64, 4]),
+            Column::new("c", [5_i64, 6]),
+        ])
+        .unwrap();
+        assert_eq!(
+            expand_selectors(&frame, &[Expr::Col("*".into())], &["b".into()]),
+            vec![Expr::Col("a".into()), Expr::Col("c".into())]
+        );
+        let result = select(
+            &frame,
+            &[Expr::Exclude(ExcludeExpr {
+                columns: vec!["b".into()],
+            })],
+        )
+        .unwrap();
+        assert_eq!(
+            result
+                .columns()
+                .iter()
+                .map(|column| column.name())
+                .collect::<Vec<_>>(),
+            vec!["a", "c"]
+        );
+        assert_eq!(
+            result.column("a").unwrap().values(),
+            vec![Value::Int(1), Value::Int(2)]
+        );
+        assert_eq!(
+            result.column("c").unwrap().values(),
+            vec![Value::Int(5), Value::Int(6)]
+        );
+    }
+
+    #[test]
+    fn selector_expands_inside_nested_expressions() {
+        let frame = Frame::new(vec![
+            Column::new("a", [1_i64, 2]),
+            Column::new("b", [3_i64, 4]),
+        ])
+        .unwrap();
+        let expression = Expr::Cast(Box::new(CastExpr {
+            expr: binary(
+                BinaryOperator::Add,
+                Expr::Col("*".into()),
+                Expr::Literal(Literal::Int("10".into())),
+            ),
+            ty: Type::Float,
+        }));
+        let result = select(&frame, &[expression]).unwrap();
+        assert_eq!(
+            result.column("a").unwrap().values(),
+            vec![Value::Float(11.0), Value::Float(12.0)]
+        );
+        assert_eq!(
+            result.column("b").unwrap().values(),
+            vec![Value::Float(13.0), Value::Float(14.0)]
         );
     }
 }
