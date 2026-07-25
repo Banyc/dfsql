@@ -1,7 +1,9 @@
+use regex::Regex;
 use std::{cmp::Ordering, collections::HashSet};
 
 use crate::sql::expr::{
-    BinaryOperator, CastExpr, ConditionalExpr, Expr, StandaloneOperator, StrExpr, UnaryOperator,
+    BinaryOperator, CastExpr, ConditionalExpr, Expr, LogExpr, StandaloneOperator, StrExpr,
+    UnaryOperator,
 };
 use crate::sql::lexer::{Literal, Type};
 
@@ -252,9 +254,18 @@ pub(crate) fn evaluate_shaped(frame: &Frame, expression: &Expr) -> Result<Evalua
             let result = evaluate_shaped(frame, &value.expr)?;
             (apply_cast(value, result.column)?, result.shape)
         }
-        Expr::Standalone(value) if value.operator == StandaloneOperator::Len => {
-            (Column::new("len", [frame.height() as u64]), Shape::Scalar)
+        Expr::Log(value) => {
+            let result = evaluate_shaped(frame, &value.expr)?;
+            (apply_log(value, result.column)?, result.shape)
         }
+        Expr::Str(value) => {
+            let result = evaluate_string(frame, value)?;
+            (result.column, result.shape)
+        }
+        Expr::Standalone(value) if value.operator == StandaloneOperator::Len => (
+            Column::new("len", vec![frame.height() as u64]),
+            Shape::Scalar,
+        ),
         Expr::Exclude(_) => return Err(Error::SelectorInScalarExpression),
         value => {
             return Err(Error::InvalidValue {
@@ -764,12 +775,63 @@ pub(crate) fn select(frame: &Frame, expressions: &[Expr]) -> Result<Frame> {
     )
 }
 
+fn apply_log(log: &LogExpr, column: Column) -> Result<Column> {
+    map_column(column, |val| {
+        Ok(Value::Float(
+            val.number("log")?
+                .expect("null handled by map")
+                .as_f64()
+                .log(log.base),
+        ))
+    })
+}
+
+fn evaluate_string(frame: &Frame, expression: &StrExpr) -> Result<Evaluated> {
+    let (string, pattern) = string_parts(expression);
+    let strings = evaluate_shaped(frame, string)?;
+    let patterns = evaluate_shaped(frame, pattern)?;
+    let name = strings.column.name().to_owned();
+    zip_evaluated(name, strings, patterns, |string, pattern| {
+        if matches!(string, Value::Null) || matches!(pattern, Value::Null) {
+            return Ok(Value::Null);
+        }
+        let string = string.string("string expression")?.unwrap();
+        let pattern = pattern.string("string expression")?.unwrap();
+        let regex = Regex::new(pattern).map_err(|error| Error::InvalidRegex {
+            pattern: pattern.into(),
+            message: error.to_string(),
+        })?;
+        Ok(match expression {
+            StrExpr::Contains(_) => Value::Bool(regex.is_match(string)),
+            StrExpr::Extract(value) => regex
+                .captures(string)
+                .and_then(|captures| captures.get(value.group))
+                .map(|val| Value::String(val.as_str().into()))
+                .unwrap_or_default(),
+            StrExpr::ExtractAll(_) => Value::List(
+                regex
+                    .find_iter(string)
+                    .map(|val| Value::String(val.as_str().into()))
+                    .collect::<Vec<_>>()
+                    .into(),
+            ),
+            StrExpr::Split(_) => Value::List(
+                regex
+                    .split(string)
+                    .map(|val| Value::String(val.into()))
+                    .collect::<Vec<_>>()
+                    .into(),
+            ),
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sql::expr::{
-        AliasExpr, BinaryExpr, BinaryOperator, ConditionalCase, ExcludeExpr, StandaloneExpr,
-        UnaryExpr, UnaryOperator,
+        AliasExpr, BinaryExpr, BinaryOperator, ConditionalCase, Contains, ExcludeExpr, Extract,
+        ExtractAll, Split, StandaloneExpr, UnaryExpr, UnaryOperator,
     };
 
     fn binary(operator: BinaryOperator, left: Expr, right: Expr) -> Expr {
@@ -1130,6 +1192,141 @@ mod tests {
                 operation: "select".into(),
                 left: 2,
                 right: 4
+            }
+        );
+    }
+
+    #[test]
+    fn log_preserves_shape_and_nulls_and_validates_numeric_input() {
+        let frame = Frame::new(vec![Column::new(
+            "number",
+            vec![Some(1.0_f64), Some(10.0), None, Some(100.0)],
+        )])
+        .unwrap();
+        let result = evaluate_shaped(
+            &frame,
+            &Expr::Log(Box::new(LogExpr {
+                expr: Expr::Col("number".into()),
+                base: 10.0,
+            })),
+        )
+        .unwrap();
+        assert_eq!(result.shape, Shape::Rows);
+        assert_eq!(
+            result.column.values(),
+            vec![
+                Value::Float(0.0),
+                Value::Float(1.0),
+                Value::Null,
+                Value::Float(2.0)
+            ]
+        );
+        let frame = Frame::new(vec![Column::new("text", vec!["x"])]).unwrap();
+        assert_eq!(
+            evaluate_shaped(
+                &frame,
+                &Expr::Log(Box::new(LogExpr {
+                    expr: Expr::Col("text".into()),
+                    base: 10.0,
+                }))
+            )
+            .unwrap_err(),
+            Error::InvalidType {
+                operation: "log",
+                kind: "string",
+            }
+        );
+    }
+
+    #[test]
+    fn string_expressions_share_broadcast_null_and_regex_rules() {
+        let frame = Frame::new(vec![Column::new(
+            "text",
+            vec![Some("abc123"), None, Some("xyz456")],
+        )])
+        .unwrap();
+        let pattern = || Expr::Literal(Literal::String(r"([a-z]+)(\d+)".into()));
+        let contains = evaluate_shaped(
+            &frame,
+            &Expr::Str(Box::new(StrExpr::Contains(Contains {
+                str: Expr::Col("text".into()),
+                pattern: pattern(),
+            }))),
+        )
+        .unwrap();
+        assert_eq!(contains.shape, Shape::Rows);
+        assert_eq!(
+            contains.column.values(),
+            vec![Value::Bool(true), Value::Null, Value::Bool(true)]
+        );
+        let extract = evaluate_shaped(
+            &frame,
+            &Expr::Str(Box::new(StrExpr::Extract(Extract {
+                str: Expr::Col("text".into()),
+                pattern: pattern(),
+                group: 1,
+            }))),
+        )
+        .unwrap();
+        assert_eq!(
+            extract.column.values(),
+            vec![Value::from("abc"), Value::Null, Value::from("xyz")]
+        );
+        let extract_all = evaluate_shaped(
+            &frame,
+            &Expr::Str(Box::new(StrExpr::ExtractAll(ExtractAll {
+                str: Expr::Col("text".into()),
+                pattern: Expr::Literal(Literal::String(r"[a-z]+|\d+".into())),
+            }))),
+        )
+        .unwrap();
+        assert_eq!(
+            extract_all.column.values(),
+            vec![
+                Value::List(vec![Value::from("abc"), Value::from("123")].into()),
+                Value::Null,
+                Value::List(vec![Value::from("xyz"), Value::from("456")].into()),
+            ]
+        );
+        let split = evaluate_shaped(
+            &frame,
+            &Expr::Str(Box::new(StrExpr::Split(Split {
+                str: Expr::Col("text".into()),
+                pattern: Expr::Literal(Literal::String(r"\d+".into())),
+            }))),
+        )
+        .unwrap();
+        assert_eq!(
+            split.column.values(),
+            vec![
+                Value::List(vec![Value::from("abc"), Value::from("")].into()),
+                Value::Null,
+                Value::List(vec![Value::from("xyz"), Value::from("")].into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn string_expressions_report_invalid_regex_and_input_type() {
+        let frame = Frame::new(vec![Column::new("text", vec!["abc"])]).unwrap();
+        let invalid = Expr::Str(Box::new(StrExpr::Contains(Contains {
+            str: Expr::Col("text".into()),
+            pattern: Expr::Literal(Literal::String("[".into())),
+        })));
+        assert!(matches!(
+            evaluate_shaped(&frame, &invalid).unwrap_err(),
+            Error::InvalidRegex { pattern, .. } if pattern == "["
+        ));
+        let frame = Frame::new(vec![Column::new("number", vec![1_i64])]).unwrap();
+        let invalid = Expr::Str(Box::new(StrExpr::Contains(Contains {
+            str: Expr::Col("number".into()),
+            pattern: Expr::Literal(Literal::String(r"\d+".into())),
+        })));
+        assert_eq!(
+            evaluate_shaped(&frame, &invalid).unwrap_err(),
+            Error::InvalidType {
+                operation: "string expression",
+                kind: "int",
             }
         );
     }
