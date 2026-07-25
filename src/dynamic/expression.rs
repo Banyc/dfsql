@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, collections::HashSet};
 
 use crate::sql::expr::{
     BinaryOperator, CastExpr, ConditionalExpr, Expr, StandaloneOperator, StrExpr, UnaryOperator,
@@ -479,6 +479,7 @@ fn apply_unary(operator: UnaryOperator, column: Column) -> Result<Column> {
         UnaryOperator::Std => reduce_variance(column, true),
         UnaryOperator::All => reduce_bool(column, true),
         UnaryOperator::Any => reduce_bool(column, false),
+        UnaryOperator::Unique => unique(column),
         UnaryOperator::Reverse => {
             let name = column.name().to_owned();
             Ok(Column::from_values(name, column.iter().rev().collect()))
@@ -499,10 +500,6 @@ fn apply_unary(operator: UnaryOperator, column: Column) -> Result<Column> {
         UnaryOperator::IsNull => map_all(column, |val| Ok(Value::Bool(matches!(val, Value::Null)))),
         UnaryOperator::IsNan => map_all(column, |val| {
             Ok(Value::Bool(matches!(val, Value::Float(v) if v.is_nan())))
-        }),
-        unsupported => Err(Error::InvalidValue {
-            operation: "unary",
-            value: format!("{unsupported:?}"),
         }),
     }
 }
@@ -660,6 +657,15 @@ fn reduce_bool(column: Column, all: bool) -> Result<Column> {
         values.try_fold(false, |result, value| Ok(result || value?.unwrap()))?
     };
     Ok(Column::new(column.name(), [value]))
+}
+
+fn unique(column: Column) -> Result<Column> {
+    let name = column.name().to_owned();
+    let mut seen = HashSet::new();
+    Ok(Column::from_values(
+        name,
+        column.iter().filter(|val| seen.insert(val.key())).collect(),
+    ))
 }
 
 fn evaluate_conditional(frame: &Frame, conditional: &ConditionalExpr) -> Result<Evaluated> {
@@ -1081,15 +1087,49 @@ mod tests {
     }
 
     #[test]
-    fn unique_is_explicitly_deferred() {
-        let frame = Frame::new(vec![Column::new("a", vec![1_i64])]).unwrap();
-        let err = evaluate_shaped(&frame, &unary(UnaryOperator::Unique, Expr::Col("a".into())))
-            .unwrap_err();
+    fn unique_preserves_first_occurrence_order_and_row_shape() {
+        let frame = Frame::new(vec![Column::new(
+            "a",
+            vec![
+                Value::Int(1),
+                Value::Null,
+                Value::UInt(1),
+                Value::Float(1.0),
+                Value::Int(2),
+                Value::Null,
+                Value::Int(1),
+            ],
+        )])
+        .unwrap();
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Unique, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.shape, Shape::Rows);
         assert_eq!(
-            err,
-            Error::InvalidValue {
-                operation: "unary",
-                value: "Unique".into()
+            result.column.values(),
+            vec![Value::Int(1), Value::Null, Value::Int(2)]
+        );
+    }
+
+    #[test]
+    fn unique_controls_output_height_and_rejects_mixed_row_lengths() {
+        let frame = Frame::new(vec![
+            Column::new("a", [1_i64, 1, 2, 2]),
+            Column::new("b", [10_i64, 20, 30, 40]),
+        ])
+        .unwrap();
+        let unique_a = unary(UnaryOperator::Unique, Expr::Col("a".into()));
+        let result = select(&frame, std::slice::from_ref(&unique_a)).unwrap();
+        assert_eq!(result.height(), 2);
+        assert_eq!(
+            result.column("a").unwrap().values(),
+            vec![Value::Int(1), Value::Int(2)]
+        );
+        assert_eq!(
+            select(&frame, &[unique_a, Expr::Col("b".into())]).unwrap_err(),
+            Error::LengthMismatch {
+                operation: "select".into(),
+                left: 2,
+                right: 4
             }
         );
     }
