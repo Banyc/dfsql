@@ -10,6 +10,14 @@ pub struct DfExecutor {
     input: HashMap<String, LazyFrame>,
 }
 impl DfExecutor {
+    pub fn from_frame(frame_name: impl Into<String>, frame: LazyFrame) -> Self {
+        let frame_name = frame_name.into();
+        Self {
+            input: HashMap::from([(frame_name.clone(), frame)]),
+            df_name: frame_name,
+        }
+    }
+
     pub fn new(df_name: String, input: HashMap<String, LazyFrame>) -> Option<Self> {
         input.get(&df_name)?;
         Some(Self { df_name, input })
@@ -18,7 +26,20 @@ impl DfExecutor {
     pub fn input(&self) -> &HashMap<String, LazyFrame> {
         &self.input
     }
+    pub fn into_input(self) -> HashMap<String, LazyFrame> {
+        self.input
+    }
+    pub fn insert_frame(
+        &mut self,
+        frame_name: impl Into<String>,
+        frame: LazyFrame,
+    ) -> Option<LazyFrame> {
+        self.input.insert(frame_name.into(), frame)
+    }
 
+    pub fn frame_name(&self) -> &str {
+        &self.df_name
+    }
     pub fn df_name(&self) -> &String {
         &self.df_name
     }
@@ -26,8 +47,17 @@ impl DfExecutor {
     pub fn df(&self) -> &LazyFrame {
         &self.input[&self.df_name]
     }
+    pub fn frame(&self) -> &LazyFrame {
+        self.df()
+    }
     pub fn df_mut(&mut self) -> &mut LazyFrame {
         self.input.get_mut(&self.df_name).unwrap()
+    }
+    pub fn frame_mut(&mut self) -> &mut LazyFrame {
+        self.df_mut()
+    }
+    pub fn set_frame_name(&mut self, frame_name: impl Into<String>) -> Result<(), DfNotExists> {
+        self.set_df_name(frame_name.into())
     }
 
     pub fn set_df_name(&mut self, df_name: String) -> Result<(), DfNotExists> {
@@ -38,6 +68,9 @@ impl DfExecutor {
 
     pub fn set_df(&mut self, df: LazyFrame) {
         *self.input.get_mut(&self.df_name).unwrap() = df;
+    }
+    pub fn set_frame(&mut self, frame: LazyFrame) {
+        self.set_df(frame);
     }
 
     pub fn execute(&mut self, s: &sql::S) -> Result<(), ApplyStatError> {
