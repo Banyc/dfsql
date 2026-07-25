@@ -1,9 +1,10 @@
 use regex::Regex;
 use std::{cmp::Ordering, collections::HashSet};
 
+use crate::sql::SortOrder;
 use crate::sql::expr::{
-    BinaryOperator, CastExpr, ConditionalExpr, Expr, LogExpr, StandaloneOperator, StrExpr,
-    UnaryOperator,
+    BinaryOperator, CastExpr, ConditionalExpr, Expr, LogExpr, SortByExpr, StandaloneOperator,
+    StrExpr, UnaryOperator,
 };
 use crate::sql::lexer::{Literal, Type};
 
@@ -219,6 +220,41 @@ fn string_parts_mut(expression: &mut StrExpr) -> (&mut Expr, &mut Expr) {
     }
 }
 
+pub(crate) fn sorted_indices(
+    columns: &[(&Column, SortOrder)],
+    height: usize,
+) -> Result<Vec<usize>> {
+    let mut indices: Vec<_> = (0..height).collect();
+    let mut failure = None;
+    indices.sort_by(|left, right| {
+        if failure.is_some() {
+            return Ordering::Equal;
+        }
+        for (column, order) in columns {
+            let compared = column.value(*left, height).and_then(|left| {
+                column
+                    .value(*right, height)
+                    .and_then(|right| left.compare(&right, "sort"))
+            });
+            let mut compared = match compared {
+                Ok(compared) => compared,
+                Err(error) => {
+                    failure = Some(error);
+                    return Ordering::Equal;
+                }
+            };
+            if *order == SortOrder::Desc {
+                compared = compared.reverse();
+            }
+            if compared != Ordering::Equal {
+                return compared;
+            }
+        }
+        Ordering::Equal
+    });
+    failure.map_or(Ok(indices), Err)
+}
+
 pub(crate) fn evaluate_shaped(frame: &Frame, expression: &Expr) -> Result<Evaluated> {
     let (column, shape) = match expression {
         Expr::Col(name) if name == "*" => return Err(Error::SelectorInScalarExpression),
@@ -262,17 +298,18 @@ pub(crate) fn evaluate_shaped(frame: &Frame, expression: &Expr) -> Result<Evalua
             let result = evaluate_string(frame, value)?;
             (result.column, result.shape)
         }
-        Expr::Standalone(value) if value.operator == StandaloneOperator::Len => (
-            Column::new("len", vec![frame.height() as u64]),
-            Shape::Scalar,
-        ),
-        Expr::Exclude(_) => return Err(Error::SelectorInScalarExpression),
-        value => {
-            return Err(Error::InvalidValue {
-                operation: "evaluate",
-                value: format!("{value:?}"),
-            });
+        Expr::Standalone(value) => match value.operator {
+            StandaloneOperator::Len => (Column::new("len", [frame.height() as u64]), Shape::Scalar),
+        },
+        Expr::SortBy(value) => {
+            let result = evaluate_sort_by(frame, value)?;
+            (result.column, result.shape)
         }
+        Expr::Sort(value) => {
+            let result = evaluate_shaped(frame, &value.expr)?;
+            (apply_sort(result.column, value.order)?, result.shape)
+        }
+        Expr::Exclude(_) => return Err(Error::SelectorInScalarExpression),
     };
     Ok(Evaluated { column, shape })
 }
@@ -826,12 +863,60 @@ fn evaluate_string(frame: &Frame, expression: &StrExpr) -> Result<Evaluated> {
     })
 }
 
+fn evaluate_sort_by(frame: &Frame, sort: &SortByExpr) -> Result<Evaluated> {
+    let value = evaluate_shaped(frame, &sort.expr)?;
+    let keys: Result<Vec<_>> = sort
+        .pairs
+        .iter()
+        .map(|(order, expression)| Ok((evaluate_shaped(frame, expression)?, *order)))
+        .collect();
+    let keys = keys?;
+    let len = combined_len(
+        "sort-by",
+        std::iter::once(&value).chain(keys.iter().map(|(key, _)| key)),
+    )?;
+    let shape = keys
+        .iter()
+        .fold(value.shape, |shape, (key, _)| shape.merge(key.shape));
+    let key_columns: Result<Vec<_>> = keys
+        .into_iter()
+        .map(|(key, order)| Ok((key.materialize(len, "sort-by")?, order)))
+        .collect();
+    let key_columns = key_columns?;
+    let references: Vec<_> = key_columns
+        .iter()
+        .map(|(key, order)| (key, *order))
+        .collect();
+    let indices = sorted_indices(&references, len)?;
+    let name = value.column.name().to_owned();
+    let column = Column::from_values(
+        name,
+        indices
+            .iter()
+            .map(|index| value.value(*index, len, "sort-by"))
+            .collect::<Result<_>>()?,
+    );
+    Ok(Evaluated { column, shape })
+}
+
+fn apply_sort(column: Column, order: SortOrder) -> Result<Column> {
+    let indices = sorted_indices(&[(&column, order)], column.len())?;
+    let name = column.name().to_owned();
+    Ok(Column::from_values(
+        name,
+        indices
+            .iter()
+            .map(|index| column.get(*index).unwrap())
+            .collect(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sql::expr::{
         AliasExpr, BinaryExpr, BinaryOperator, ConditionalCase, Contains, ExcludeExpr, Extract,
-        ExtractAll, Split, StandaloneExpr, UnaryExpr, UnaryOperator,
+        ExtractAll, SortExpr, Split, StandaloneExpr, UnaryExpr, UnaryOperator,
     };
 
     fn binary(operator: BinaryOperator, left: Expr, right: Expr) -> Expr {
@@ -1634,6 +1719,150 @@ mod tests {
         assert_eq!(
             result.column("b").unwrap().values(),
             vec![Value::Float(13.0), Value::Float(14.0)]
+        );
+    }
+
+    #[test]
+    fn sort_orders_nulls_and_numbers_stably() {
+        let frame = Frame::new(vec![Column::new(
+            "value",
+            vec![
+                Value::Null,
+                Value::Int(2),
+                Value::UInt(1),
+                Value::Float(1.0),
+                Value::Float(2.0),
+            ],
+        )])
+        .unwrap();
+        let asc = evaluate_shaped(
+            &frame,
+            &Expr::Sort(Box::new(SortExpr {
+                expr: Expr::Col("value".into()),
+                order: SortOrder::Asc,
+            })),
+        )
+        .unwrap();
+        assert_eq!(
+            asc.column.values(),
+            vec![
+                Value::Null,
+                Value::UInt(1),
+                Value::Float(1.0),
+                Value::Int(2),
+                Value::Float(2.0)
+            ]
+        );
+        let desc = evaluate_shaped(
+            &frame,
+            &Expr::Sort(Box::new(SortExpr {
+                expr: Expr::Col("value".into()),
+                order: SortOrder::Desc,
+            })),
+        )
+        .unwrap();
+        assert_eq!(
+            desc.column.values(),
+            vec![
+                Value::Int(2),
+                Value::Float(2.0),
+                Value::UInt(1),
+                Value::Float(1.0),
+                Value::Null
+            ]
+        );
+    }
+
+    #[test]
+    fn sort_by_uses_multiple_keys_and_broadcasts_scalar_values() {
+        let frame = Frame::new(vec![
+            Column::new("value", ["a", "b", "c", "d"]),
+            Column::new("group", [1_i64, 1, 2, 2]),
+            Column::new("score", [10_i64, 20, 10, 20]),
+        ])
+        .unwrap();
+        let sorted = evaluate_shaped(
+            &frame,
+            &Expr::SortBy(Box::new(SortByExpr {
+                pairs: vec![
+                    (SortOrder::Asc, Expr::Col("group".into())),
+                    (SortOrder::Desc, Expr::Col("score".into())),
+                ],
+                expr: Expr::Col("value".into()),
+            })),
+        )
+        .unwrap();
+        assert_eq!(sorted.shape, Shape::Rows);
+        assert_eq!(
+            sorted.column.values(),
+            vec![
+                Value::from("b"),
+                Value::from("a"),
+                Value::from("d"),
+                Value::from("c")
+            ]
+        );
+        let scalar = evaluate_shaped(
+            &frame,
+            &Expr::SortBy(Box::new(SortByExpr {
+                pairs: vec![(SortOrder::Desc, Expr::Col("score".into()))],
+                expr: Expr::Literal(Literal::Int("1".into())),
+            })),
+        )
+        .unwrap();
+        assert_eq!(scalar.shape, Shape::Rows);
+        assert_eq!(
+            scalar.column.values(),
+            vec![Value::Int(1), Value::Int(1), Value::Int(1), Value::Int(1)]
+        );
+    }
+
+    #[test]
+    fn sort_reports_invalid_types_and_row_length_mismatches() {
+        let frame = Frame::new(vec![Column::new(
+            "list",
+            vec![
+                Value::List(vec![Value::Int(1)].into()),
+                Value::List(vec![Value::Int(2)].into()),
+            ],
+        )])
+        .unwrap();
+        assert_eq!(
+            evaluate_shaped(
+                &frame,
+                &Expr::Sort(Box::new(SortExpr {
+                    expr: Expr::Col("list".into()),
+                    order: SortOrder::Asc
+                }))
+            )
+            .unwrap_err(),
+            Error::InvalidType {
+                operation: "sort",
+                kind: "list"
+            }
+        );
+        let frame = Frame::new(vec![
+            Column::new("key", [1_i64, 1, 2, 2]),
+            Column::new("value", [10_i64, 20, 30, 40]),
+        ])
+        .unwrap();
+        let expression = Expr::SortBy(Box::new(SortByExpr {
+            pairs: vec![(
+                SortOrder::Asc,
+                Expr::Unary(Box::new(UnaryExpr {
+                    operator: UnaryOperator::Unique,
+                    expr: Expr::Col("key".into()),
+                })),
+            )],
+            expr: Expr::Col("value".into()),
+        }));
+        assert_eq!(
+            evaluate_shaped(&frame, &expression).unwrap_err(),
+            Error::LengthMismatch {
+                operation: "sort-by",
+                left: 4,
+                right: 2
+            }
         );
     }
 }
