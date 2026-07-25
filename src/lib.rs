@@ -1,6 +1,8 @@
 #[cfg(feature = "cli")]
 pub mod cli;
+#[cfg(feature = "polars-backend")]
 pub mod df;
+pub mod dynamic;
 #[cfg(feature = "cli")]
 pub mod handler;
 #[cfg(feature = "cli")]

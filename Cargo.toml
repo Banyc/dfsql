@@ -23,10 +23,18 @@ polars = { version = "0.47", features = [
     "dtype-categorical",
     # https://github.com/pola-rs/polars/issues/22733
     "dtype-i128",
-] }
+], optional = true }
+regex = "1"
 rustyline = { version = "15", features = ["derive"], optional = true }
 thiserror = "2"
 
 [features]
-default = ["cli"]
-cli = ["anyhow", "clap", "fancy-regex", "banyc_polars_util", "rustyline"]
+default = []
+dynamic-backend = []
+polars-backend = ["dep:polars"]
+cli = ["anyhow", "clap", "fancy-regex", "banyc_polars_util", "rustyline", "polars-backend"]
+
+[[bin]]
+name = "dfsql"
+path = "src/main.rs"
+required-features = ["cli"]

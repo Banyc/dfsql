@@ -606,6 +606,7 @@ dependencies = [
  "clap",
  "fancy-regex",
  "polars",
+ "regex",
  "rustyline",
  "thiserror",
  "winnow",
