@@ -864,6 +864,12 @@ fn evaluate_string(frame: &Frame, expression: &StrExpr) -> Result<Evaluated> {
 }
 
 fn evaluate_sort_by(frame: &Frame, sort: &SortByExpr) -> Result<Evaluated> {
+    if sort.pairs.is_empty() {
+        return Err(Error::InvalidValue {
+            operation: "sort by",
+            value: "no sort keys".into(),
+        });
+    }
     let value = evaluate_shaped(frame, &sort.expr)?;
     let keys: Result<Vec<_>> = sort
         .pairs

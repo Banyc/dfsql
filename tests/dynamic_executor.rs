@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use dfsql::dynamic::{Column, Error, Executor, Frame, Value};
 use dfsql::sql::{
     S, SortOrder,
-    expr::{Expr, UnaryExpr, UnaryOperator},
+    expr::{Expr, SortByExpr, UnaryExpr, UnaryOperator},
     stat::{
         CloneStat, FilterStat, GroupAggStat, JoinStat, LimitStat, SelectStat, SingleColJoinStat,
         SingleColJoinType, SortStat, Stat, UseStat,
@@ -164,5 +164,26 @@ fn executor_full_join_keeps_unmatched_rows_and_renames_collisions() {
             Value::Null,
             Value::Int(3)
         ]
+    );
+}
+
+#[test]
+fn executor_rejects_sort_by_without_keys() {
+    let frame = Frame::new(vec![Column::new("value", [2_i64, 1])]).unwrap();
+    assert_eq!(
+        run(
+            frame,
+            vec![Stat::Select(SelectStat {
+                columns: vec![Expr::SortBy(Box::new(SortByExpr {
+                    expr: Expr::Col("value".into()),
+                    pairs: Vec::new(),
+                }))],
+            })]
+        )
+        .unwrap_err(),
+        Error::InvalidValue {
+            operation: "sort by",
+            value: "no sort keys".into(),
+        }
     );
 }
