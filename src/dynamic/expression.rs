@@ -834,6 +834,15 @@ fn evaluate_string(frame: &Frame, expression: &StrExpr) -> Result<Evaluated> {
         }
         let string = string.string("string expression")?.unwrap();
         let pattern = pattern.string("string expression")?.unwrap();
+        if matches!(expression, StrExpr::Split(_)) && pattern.is_empty() {
+            return Ok(Value::List(
+                string
+                    .chars()
+                    .map(|val| Value::String(val.to_string().into()))
+                    .collect::<Vec<_>>()
+                    .into(),
+            ));
+        }
         let regex = Regex::new(pattern).map_err(|error| Error::InvalidRegex {
             pattern: pattern.into(),
             message: error.to_string(),
