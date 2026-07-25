@@ -309,6 +309,10 @@ impl Frame {
         self.height == 0
     }
 
+    pub fn column_names(&self) -> Vec<&str> {
+        self.columns.iter().map(|c| c.name()).collect()
+    }
+
     pub fn width(&self) -> usize {
         self.columns.len()
     }

@@ -1,8 +1,9 @@
-#[allow(dead_code)]
+mod executor;
 pub(crate) mod expression;
 mod frame;
 mod value;
 
+pub use executor::Executor;
 pub use frame::{Column, ColumnData, Frame};
 pub use value::{IntoValue, Value, ValueType};
 
