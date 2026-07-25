@@ -307,7 +307,18 @@ fn invalid_value(operation: &'static str, value: impl ToString) -> Error {
 fn is_reduction(operator: UnaryOperator) -> bool {
     matches!(
         operator,
-        UnaryOperator::Sum | UnaryOperator::Count | UnaryOperator::First | UnaryOperator::Last
+        UnaryOperator::Sum
+            | UnaryOperator::Count
+            | UnaryOperator::First
+            | UnaryOperator::Last
+            | UnaryOperator::Mean
+            | UnaryOperator::Median
+            | UnaryOperator::Max
+            | UnaryOperator::Min
+            | UnaryOperator::Var
+            | UnaryOperator::Std
+            | UnaryOperator::All
+            | UnaryOperator::Any
     )
 }
 
@@ -325,6 +336,14 @@ fn apply_unary(operator: UnaryOperator, column: Column) -> Result<Column> {
         )),
         UnaryOperator::First => reduce_edge(column, false),
         UnaryOperator::Last => reduce_edge(column, true),
+        UnaryOperator::Mean => reduce_mean(column),
+        UnaryOperator::Median => reduce_median(column),
+        UnaryOperator::Max => reduce_extreme(column, false),
+        UnaryOperator::Min => reduce_extreme(column, true),
+        UnaryOperator::Var => reduce_variance(column, false),
+        UnaryOperator::Std => reduce_variance(column, true),
+        UnaryOperator::All => reduce_bool(column, true),
+        UnaryOperator::Any => reduce_bool(column, false),
         UnaryOperator::Reverse => {
             let name = column.name().to_owned();
             Ok(Column::from_values(name, column.iter().rev().collect()))
@@ -415,6 +434,97 @@ fn reduce_edge(column: Column, last: bool) -> Result<Column> {
     }
     .unwrap_or_default();
     Ok(Column::from_values(column.name(), vec![value]))
+}
+
+fn numbers(column: &Column, operation: &'static str) -> Result<Vec<f64>> {
+    column
+        .iter()
+        .filter(|value| !matches!(value, Value::Null))
+        .map(|value| {
+            value
+                .number(operation)?
+                .map(Number::as_f64)
+                .ok_or_else(|| value.invalid_type(operation))
+        })
+        .collect()
+}
+
+fn reduce_mean(column: Column) -> Result<Column> {
+    let values = numbers(&column, "mean")?;
+    let value = if values.is_empty() {
+        Value::Null
+    } else {
+        Value::Float(values.iter().sum::<f64>() / values.len() as f64)
+    };
+    Ok(Column::from_values(column.name(), vec![value]))
+}
+
+fn reduce_median(column: Column) -> Result<Column> {
+    let mut values = numbers(&column, "median")?;
+    values.sort_by(f64::total_cmp);
+    let value = match values.len() {
+        0 => Value::Null,
+        len if len % 2 == 1 => Value::Float(values[len / 2]),
+        len => Value::Float((values[len / 2 - 1] + values[len / 2]) / 2.0),
+    };
+    Ok(Column::from_values(column.name(), vec![value]))
+}
+
+fn reduce_extreme(column: Column, minimum: bool) -> Result<Column> {
+    let mut result: Option<Value> = None;
+    for value in column.iter().filter(|value| !matches!(value, Value::Null)) {
+        let replace = match &result {
+            None => true,
+            Some(current) => {
+                value.compare(current, if minimum { "min" } else { "max" })?
+                    == if minimum {
+                        Ordering::Less
+                    } else {
+                        Ordering::Greater
+                    }
+            }
+        };
+        if replace {
+            result = Some(value);
+        }
+    }
+    Ok(Column::from_values(
+        column.name(),
+        vec![result.unwrap_or_default()],
+    ))
+}
+
+fn reduce_variance(column: Column, standard_deviation: bool) -> Result<Column> {
+    let values = numbers(&column, if standard_deviation { "std" } else { "var" })?;
+    let value = if values.len() < 2 {
+        Value::Null
+    } else {
+        let mean = values.iter().sum::<f64>() / values.len() as f64;
+        let variance = values
+            .iter()
+            .map(|value| (value - mean).powi(2))
+            .sum::<f64>()
+            / (values.len() - 1) as f64;
+        Value::Float(if standard_deviation {
+            variance.sqrt()
+        } else {
+            variance
+        })
+    };
+    Ok(Column::from_values(column.name(), vec![value]))
+}
+
+fn reduce_bool(column: Column, all: bool) -> Result<Column> {
+    let mut values = column
+        .iter()
+        .filter(|value| !matches!(value, Value::Null))
+        .map(|value| value.bool(if all { "all" } else { "any" }));
+    let value = if all {
+        values.try_fold(true, |result, value| Ok(result && value?.unwrap()))?
+    } else {
+        values.try_fold(false, |result, value| Ok(result || value?.unwrap()))?
+    };
+    Ok(Column::new(column.name(), [value]))
 }
 
 pub(crate) fn select(frame: &Frame, expressions: &[Expr]) -> Result<Frame> {
@@ -758,15 +868,173 @@ mod tests {
     }
 
     #[test]
-    fn advanced_unary_is_explicitly_deferred() {
+    fn unique_is_explicitly_deferred() {
         let frame = Frame::new(vec![Column::new("a", vec![1_i64])]).unwrap();
-        let err = evaluate_shaped(&frame, &unary(UnaryOperator::Mean, Expr::Col("a".into())))
+        let err = evaluate_shaped(&frame, &unary(UnaryOperator::Unique, Expr::Col("a".into())))
             .unwrap_err();
         assert_eq!(
             err,
             Error::InvalidValue {
                 operation: "unary",
-                value: "Mean".into()
+                value: "Unique".into()
+            }
+        );
+    }
+
+    #[test]
+    fn statistical_reductions_ignore_nulls() {
+        let frame = Frame::new(vec![Column::new(
+            "a",
+            vec![Value::Null, Value::Int(1), Value::Int(3), Value::Null],
+        )])
+        .unwrap();
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Mean, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.shape, Shape::Scalar);
+        assert_eq!(result.column.get(0), Some(Value::Float(2.0)));
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Median, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.shape, Shape::Scalar);
+        assert_eq!(result.column.get(0), Some(Value::Float(2.0)));
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Var, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.shape, Shape::Scalar);
+        assert_eq!(result.column.get(0), Some(Value::Float(2.0)));
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Std, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.shape, Shape::Scalar);
+        assert_eq!(result.column.get(0), Some(Value::Float(2.0_f64.sqrt())));
+    }
+
+    #[test]
+    fn statistical_reductions_require_enough_values() {
+        let frame = Frame::new(vec![Column::new("a", vec![Value::Null, Value::Null])]).unwrap();
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Mean, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.column.get(0), Some(Value::Null));
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Median, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.column.get(0), Some(Value::Null));
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Var, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.column.get(0), Some(Value::Null));
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Std, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.column.get(0), Some(Value::Null));
+
+        let frame = Frame::new(vec![Column::new("a", vec![Value::Int(5)])]).unwrap();
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Mean, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.column.get(0), Some(Value::Float(5.0)));
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Median, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.column.get(0), Some(Value::Float(5.0)));
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Var, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.column.get(0), Some(Value::Null));
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Std, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.column.get(0), Some(Value::Null));
+    }
+
+    #[test]
+    fn extreme_reductions_preserve_selected_values() {
+        let frame = Frame::new(vec![Column::new(
+            "a",
+            vec![
+                Value::UInt(1),
+                Value::Float(2.5),
+                Value::Int(-3),
+                Value::Null,
+            ],
+        )])
+        .unwrap();
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Min, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.column.get(0), Some(Value::Int(-3)));
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Max, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.column.get(0), Some(Value::Float(2.5)));
+
+        let frame = Frame::new(vec![Column::new("a", vec![Value::Null, Value::Null])]).unwrap();
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Min, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.column.get(0), Some(Value::Null));
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Max, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.column.get(0), Some(Value::Null));
+    }
+
+    #[test]
+    fn boolean_reductions_ignore_nulls() {
+        let frame = Frame::new(vec![Column::new(
+            "a",
+            vec![Value::Bool(true), Value::Null, Value::Bool(true)],
+        )])
+        .unwrap();
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::All, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.column.get(0), Some(Value::Bool(true)));
+
+        let frame = Frame::new(vec![Column::new(
+            "a",
+            vec![Value::Bool(false), Value::Null, Value::Bool(true)],
+        )])
+        .unwrap();
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Any, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.column.get(0), Some(Value::Bool(true)));
+
+        let frame = Frame::new(vec![Column::new("a", vec![Value::Null, Value::Null])]).unwrap();
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::All, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.column.get(0), Some(Value::Bool(true)));
+
+        let result =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Any, Expr::Col("a".into()))).unwrap();
+        assert_eq!(result.column.get(0), Some(Value::Bool(false)));
+    }
+
+    #[test]
+    fn boolean_reductions_reject_non_boolean_values() {
+        let frame = Frame::new(vec![Column::new("a", vec![Value::Int(5)])]).unwrap();
+
+        let err =
+            evaluate_shaped(&frame, &unary(UnaryOperator::All, Expr::Col("a".into()))).unwrap_err();
+        assert_eq!(
+            err,
+            Error::InvalidType {
+                operation: "all",
+                kind: "int"
+            }
+        );
+
+        let err =
+            evaluate_shaped(&frame, &unary(UnaryOperator::Any, Expr::Col("a".into()))).unwrap_err();
+        assert_eq!(
+            err,
+            Error::InvalidType {
+                operation: "any",
+                kind: "int"
             }
         );
     }
