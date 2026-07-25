@@ -691,7 +691,9 @@ fn str_expr(input: &mut Tokens<'_>) -> Result<StrExpr, String> {
             let saved = *input;
             *input = &input[1..];
             match input.first() {
-                Some(Token::StringKeyword(StringKeyword::All)) => {
+                Some(
+                    Token::StringKeyword(StringKeyword::All) | Token::ExprKeyword(ExprKeyword::All),
+                ) => {
                     *input = &input[1..];
                     let pattern = expr(input)?;
                     let s = expr(input)?;

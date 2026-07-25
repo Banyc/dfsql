@@ -149,6 +149,12 @@ fn keyword_or_var(ident: &str) -> Token {
     if let Some(kw) = stat_keyword(&lower) {
         return Token::Stat(kw);
     }
+    match lower.as_str() {
+        "true" => return Token::Literal(Literal::Bool(true)),
+        "false" => return Token::Literal(Literal::Bool(false)),
+        "null" => return Token::Literal(Literal::Null),
+        _ => {}
+    }
     if let Some(kw) = expr_keyword(ident, &lower) {
         return kw;
     }

@@ -190,7 +190,7 @@ pub struct SortStat {
 fn sort_stat(input: &mut Tokens<'_>) -> Result<SortStat, String> {
     expect_token(input, &Token::Stat(StatKeyword::Sort))?;
     let mut pairs = Vec::new();
-    while !input.is_empty() && can_start_column_name(input.first()) {
+    while can_start_sort_pair(input.first()) {
         let order = sort_order(input)?;
         let name = column_name(input)?;
         pairs.push((order, name));
@@ -236,6 +236,14 @@ fn can_start_column_name(t: Option<&Token>) -> bool {
             | Some(Token::Literal(Literal::String(_)))
             | Some(Token::ExprKeyword(ExprKeyword::Col))
     )
+}
+
+fn can_start_sort_pair(t: Option<&Token>) -> bool {
+    can_start_column_name(t)
+        || matches!(
+            t,
+            Some(Token::ExprKeyword(ExprKeyword::Asc | ExprKeyword::Desc))
+        )
 }
 
 // ---- Join ----
