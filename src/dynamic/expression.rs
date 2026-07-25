@@ -1289,7 +1289,7 @@ mod tests {
         assert_eq!(
             select(&frame, &[unique_a, Expr::Col("b".into())]).unwrap_err(),
             Error::LengthMismatch {
-                operation: "select".into(),
+                operation: "select",
                 left: 2,
                 right: 4
             }
