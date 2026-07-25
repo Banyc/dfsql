@@ -1,7 +1,9 @@
 use std::cmp::Ordering;
 
-use crate::sql::expr::{BinaryOperator, Expr, StandaloneOperator, UnaryOperator};
-use crate::sql::lexer::Literal;
+use crate::sql::expr::{
+    BinaryOperator, CastExpr, ConditionalExpr, Expr, StandaloneOperator, UnaryOperator,
+};
+use crate::sql::lexer::{Literal, Type};
 
 use super::value::Number;
 use super::{Column, Error, Frame, Result, Value};
@@ -85,6 +87,8 @@ pub(crate) fn expression_name(expression: &Expr) -> String {
         Expr::Col(name) => name.clone(),
         Expr::Literal(_) => "literal".into(),
         Expr::Alias(value) => value.name.clone(),
+        Expr::Conditional(value) => expression_name(&value.first_case.then),
+        Expr::Cast(value) => expression_name(&value.expr),
         Expr::Standalone(_) => "len".into(),
         _ => "expression".into(),
     }
@@ -116,6 +120,14 @@ pub(crate) fn evaluate_shaped(frame: &Frame, expression: &Expr) -> Result<Evalua
         Expr::Alias(value) => {
             let evaluated = evaluate_shaped(frame, &value.expr)?;
             (evaluated.column.rename(value.name.clone()), evaluated.shape)
+        }
+        Expr::Conditional(value) => {
+            let result = evaluate_conditional(frame, value)?;
+            (result.column, result.shape)
+        }
+        Expr::Cast(value) => {
+            let result = evaluate_shaped(frame, &value.expr)?;
+            (apply_cast(value, result.column)?, result.shape)
         }
         Expr::Standalone(value) if value.operator == StandaloneOperator::Len => {
             (Column::new("len", [frame.height() as u64]), Shape::Scalar)
@@ -527,6 +539,83 @@ fn reduce_bool(column: Column, all: bool) -> Result<Column> {
     Ok(Column::new(column.name(), [value]))
 }
 
+fn evaluate_conditional(frame: &Frame, conditional: &ConditionalExpr) -> Result<Evaluated> {
+    let mut cases = Vec::with_capacity(conditional.other_cases.len() + 1);
+    for case in std::iter::once(&conditional.first_case).chain(&conditional.other_cases) {
+        cases.push((
+            evaluate_shaped(frame, &case.when)?,
+            evaluate_shaped(frame, &case.then)?,
+        ));
+    }
+    let otherwise = evaluate_shaped(frame, &conditional.otherwise)?;
+    let shape = cases.iter().fold(otherwise.shape, |shape, (when, then)| {
+        shape.merge(when.shape).merge(then.shape)
+    });
+    let len = combined_len(
+        "conditional",
+        std::iter::once(&otherwise).chain(cases.iter().flat_map(|(when, then)| [when, then])),
+    )?;
+    let name = expression_name(&conditional.first_case.then);
+    let values = (0..len)
+        .map(|index| {
+            for (when, then) in &cases {
+                if when
+                    .value(index, len, "conditional")?
+                    .bool("conditional")?
+                    .unwrap_or(false)
+                {
+                    return then.value(index, len, "conditional");
+                }
+            }
+            otherwise.value(index, len, "conditional")
+        })
+        .collect::<Result<_>>()?;
+    Ok(Evaluated {
+        column: Column::from_values(name, values),
+        shape,
+    })
+}
+
+fn apply_cast(cast: &CastExpr, column: Column) -> Result<Column> {
+    map_column(column, |value| cast_value(value, cast.ty))
+}
+
+fn cast_value(value: &Value, ty: Type) -> Result<Value> {
+    if ty == Type::Str {
+        return Ok(Value::String(value.to_string().into()));
+    }
+    let number = match value {
+        Value::Bool(value) => Number::UInt(u64::from(*value)),
+        Value::UInt(value) => Number::UInt(*value),
+        Value::Int(value) => Number::Int(*value),
+        Value::Float(value) => Number::Float(*value),
+        Value::String(value) => {
+            return match ty {
+                Type::UInt => value
+                    .parse()
+                    .map(Value::UInt)
+                    .map_err(|_| invalid_value("cast", value)),
+                Type::Int => value
+                    .parse()
+                    .map(Value::Int)
+                    .map_err(|_| invalid_value("cast", value)),
+                Type::Float => value
+                    .parse()
+                    .map(Value::Float)
+                    .map_err(|_| invalid_value("cast", value)),
+                Type::Str => unreachable!(),
+            };
+        }
+        value => return Err(value.invalid_type("cast")),
+    };
+    Ok(match ty {
+        Type::UInt => Value::UInt(number.as_f64() as u64),
+        Type::Int => Value::Int(number.as_f64() as i64),
+        Type::Float => Value::Float(number.as_f64()),
+        Type::Str => unreachable!(),
+    })
+}
+
 pub(crate) fn select(frame: &Frame, expressions: &[Expr]) -> Result<Frame> {
     let evaluated = expressions
         .iter()
@@ -550,7 +639,8 @@ pub(crate) fn select(frame: &Frame, expressions: &[Expr]) -> Result<Frame> {
 mod tests {
     use super::*;
     use crate::sql::expr::{
-        AliasExpr, BinaryExpr, BinaryOperator, StandaloneExpr, UnaryExpr, UnaryOperator,
+        AliasExpr, BinaryExpr, BinaryOperator, ConditionalCase, StandaloneExpr, UnaryExpr,
+        UnaryOperator,
     };
 
     fn binary(operator: BinaryOperator, left: Expr, right: Expr) -> Expr {
@@ -1035,6 +1125,91 @@ mod tests {
             Error::InvalidType {
                 operation: "any",
                 kind: "int"
+            }
+        );
+    }
+
+    #[test]
+    fn conditional_selects_first_true_case_and_broadcasts_branches() {
+        let frame = Frame::new(vec![
+            Column::new("first", [Some(true), Some(false), None, Some(true)]),
+            Column::new("second", [false, true, true, true]),
+        ])
+        .unwrap();
+        let expression = Expr::Conditional(Box::new(ConditionalExpr {
+            first_case: ConditionalCase {
+                when: Expr::Col("first".into()),
+                then: Expr::Literal(Literal::Int("1".into())),
+            },
+            other_cases: vec![ConditionalCase {
+                when: Expr::Col("second".into()),
+                then: Expr::Literal(Literal::Int("2".into())),
+            }],
+            otherwise: Expr::Literal(Literal::Int("3".into())),
+        }));
+        let result = evaluate_shaped(&frame, &expression).unwrap();
+        assert_eq!(result.shape, Shape::Rows);
+        assert_eq!(
+            result.column.values(),
+            vec![Value::Int(1), Value::Int(2), Value::Int(2), Value::Int(1)]
+        );
+    }
+
+    #[test]
+    fn conditional_rejects_non_boolean_conditions() {
+        let frame = Frame::new(vec![Column::new("when", [1_i64])]).unwrap();
+        let expression = Expr::Conditional(Box::new(ConditionalExpr {
+            first_case: ConditionalCase {
+                when: Expr::Col("when".into()),
+                then: Expr::Literal(Literal::Int("1".into())),
+            },
+            other_cases: vec![],
+            otherwise: Expr::Literal(Literal::Int("0".into())),
+        }));
+        assert_eq!(
+            evaluate_shaped(&frame, &expression).unwrap_err(),
+            Error::InvalidType {
+                operation: "conditional",
+                kind: "int"
+            }
+        );
+    }
+
+    #[test]
+    fn casts_preserve_shape_propagate_null_and_validate_strings() {
+        let frame = Frame::new(vec![Column::new("number", [Some(2_i64), None])]).unwrap();
+        let float = evaluate_shaped(
+            &frame,
+            &Expr::Cast(Box::new(CastExpr {
+                expr: Expr::Col("number".into()),
+                ty: Type::Float,
+            })),
+        )
+        .unwrap();
+        assert_eq!(float.shape, Shape::Rows);
+        assert_eq!(float.column.values(), vec![Value::Float(2.0), Value::Null]);
+        let string = evaluate_shaped(
+            &frame,
+            &Expr::Cast(Box::new(CastExpr {
+                expr: Expr::Col("number".into()),
+                ty: Type::Str,
+            })),
+        )
+        .unwrap();
+        assert_eq!(string.column.values(), vec![Value::from("2"), Value::Null]);
+        assert_eq!(
+            cast_value(&Value::from("7"), Type::UInt).unwrap(),
+            Value::UInt(7)
+        );
+        assert_eq!(
+            cast_value(&Value::Bool(true), Type::Int).unwrap(),
+            Value::Int(1)
+        );
+        assert_eq!(
+            cast_value(&Value::from("not-a-number"), Type::Float).unwrap_err(),
+            Error::InvalidValue {
+                operation: "cast",
+                value: "not-a-number".into()
             }
         );
     }
