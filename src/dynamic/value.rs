@@ -252,7 +252,7 @@ impl IntoValue for Vec<Value> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum Number {
     UInt(u64),
     Int(i64),
@@ -260,11 +260,11 @@ pub(crate) enum Number {
 }
 
 impl Number {
-    fn as_f64(&self) -> f64 {
+    pub(crate) fn as_f64(self) -> f64 {
         match self {
-            Number::UInt(v) => *v as f64,
-            Number::Int(v) => *v as f64,
-            Number::Float(v) => *v,
+            Self::UInt(value) => value as f64,
+            Self::Int(value) => value as f64,
+            Self::Float(value) => value,
         }
     }
 }

@@ -1,12 +1,25 @@
-use crate::sql::expr::{Expr, StandaloneOperator};
+use std::cmp::Ordering;
+
+use crate::sql::expr::{BinaryOperator, Expr, StandaloneOperator};
 use crate::sql::lexer::Literal;
 
+use super::value::Number;
 use super::{Column, Error, Frame, Result, Value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Shape {
     Scalar,
     Rows,
+}
+
+impl Shape {
+    fn merge(self, other: Self) -> Self {
+        if self == Self::Scalar && other == Self::Scalar {
+            Self::Scalar
+        } else {
+            Self::Rows
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -85,6 +98,12 @@ pub(crate) fn evaluate_shaped(frame: &Frame, expression: &Expr) -> Result<Evalua
             Column::from_values("literal", vec![literal_value(value)?]),
             Shape::Scalar,
         ),
+        Expr::Binary(value) => {
+            let left = evaluate_shaped(frame, &value.left)?;
+            let right = evaluate_shaped(frame, &value.right)?;
+            let result = apply_binary(value.operator, left, right)?;
+            (result.column, result.shape)
+        }
         Expr::Alias(value) => {
             let evaluated = evaluate_shaped(frame, &value.expr)?;
             (evaluated.column.rename(value.name.clone()), evaluated.shape)
@@ -101,6 +120,179 @@ pub(crate) fn evaluate_shaped(frame: &Frame, expression: &Expr) -> Result<Evalua
         }
     };
     Ok(Evaluated { column, shape })
+}
+
+fn combined_len<'a>(
+    operation: &'static str,
+    values: impl IntoIterator<Item = &'a Evaluated>,
+) -> Result<usize> {
+    let mut rows = None;
+    for value in values {
+        if value.shape == Shape::Rows {
+            if let Some(len) = rows {
+                if len != value.column.len() {
+                    return Err(Error::LengthMismatch {
+                        operation,
+                        left: len,
+                        right: value.column.len(),
+                    });
+                }
+            } else {
+                rows = Some(value.column.len());
+            }
+        } else if value.column.len() != 1 {
+            return Err(Error::LengthMismatch {
+                operation,
+                left: value.column.len(),
+                right: 1,
+            });
+        }
+    }
+    Ok(rows.unwrap_or(1))
+}
+
+fn apply_binary(operator: BinaryOperator, left: Evaluated, right: Evaluated) -> Result<Evaluated> {
+    let name = left.column.name().to_owned();
+    zip_evaluated(name, left, right, |left, right| {
+        binary_value(operator, left, right)
+    })
+}
+
+fn zip_evaluated(
+    name: impl Into<String>,
+    left: Evaluated,
+    right: Evaluated,
+    mut function: impl FnMut(&Value, &Value) -> Result<Value>,
+) -> Result<Evaluated> {
+    let len = combined_len("expression", [&left, &right])?;
+    let values = (0..len)
+        .map(|index| {
+            function(
+                &left.value(index, len, "expression")?,
+                &right.value(index, len, "expression")?,
+            )
+        })
+        .collect::<Result<_>>()?;
+    Ok(Evaluated {
+        column: Column::from_values(name, values),
+        shape: left.shape.merge(right.shape),
+    })
+}
+
+fn binary_value(operator: BinaryOperator, left: &Value, right: &Value) -> Result<Value> {
+    if matches!(left, Value::Null) || matches!(right, Value::Null) {
+        return Ok(Value::Null);
+    }
+    match operator {
+        BinaryOperator::Eq => Ok(Value::Bool(left.equal(right))),
+        BinaryOperator::NotEq => Ok(Value::Bool(!left.equal(right))),
+        BinaryOperator::Lt => compare(left, right, |value| value == Ordering::Less),
+        BinaryOperator::LtEq => compare(left, right, |value| value != Ordering::Greater),
+        BinaryOperator::Gt => compare(left, right, |value| value == Ordering::Greater),
+        BinaryOperator::GtEq => compare(left, right, |value| value != Ordering::Less),
+        BinaryOperator::And | BinaryOperator::Or => logical_value(operator, left, right),
+        BinaryOperator::Add
+        | BinaryOperator::Sub
+        | BinaryOperator::Mul
+        | BinaryOperator::Div
+        | BinaryOperator::Modulo
+        | BinaryOperator::Pow => numeric_value(operator, left, right),
+    }
+}
+
+fn compare(left: &Value, right: &Value, predicate: impl FnOnce(Ordering) -> bool) -> Result<Value> {
+    Ok(Value::Bool(predicate(left.compare(right, "comparison")?)))
+}
+
+fn logical_value(operator: BinaryOperator, left: &Value, right: &Value) -> Result<Value> {
+    if let (Some(left), Some(right)) = (left.bool("logical")?, right.bool("logical")?) {
+        return Ok(Value::Bool(match operator {
+            BinaryOperator::And => left & right,
+            BinaryOperator::Or => left | right,
+            _ => unreachable!(),
+        }));
+    }
+    unreachable!("nulls are handled before logical evaluation")
+}
+
+fn numeric_value(operator: BinaryOperator, left: &Value, right: &Value) -> Result<Value> {
+    let left = left.number("arithmetic")?.expect("null handled by caller");
+    let right = right.number("arithmetic")?.expect("null handled by caller");
+    if right.as_f64() == 0.0 && matches!(operator, BinaryOperator::Div | BinaryOperator::Modulo) {
+        return Err(Error::InvalidValue {
+            operation: "arithmetic",
+            value: "division by zero".into(),
+        });
+    }
+    if matches!(left, Number::Float(_)) || matches!(right, Number::Float(_)) {
+        let (left, right) = (left.as_f64(), right.as_f64());
+        return Ok(Value::Float(match operator {
+            BinaryOperator::Add => left + right,
+            BinaryOperator::Sub => left - right,
+            BinaryOperator::Mul => left * right,
+            BinaryOperator::Div => left / right,
+            BinaryOperator::Modulo => left % right,
+            BinaryOperator::Pow => left.powf(right),
+            _ => unreachable!(),
+        }));
+    }
+    if matches!(left, Number::Int(_)) || matches!(right, Number::Int(_)) {
+        return signed_value(operator, as_i64(left), as_i64(right));
+    }
+    unsigned_value(operator, as_u64(left), as_u64(right))
+}
+
+fn signed_value(operator: BinaryOperator, left: i64, right: i64) -> Result<Value> {
+    let value = match operator {
+        BinaryOperator::Add => left.wrapping_add(right),
+        BinaryOperator::Sub => left.wrapping_sub(right),
+        BinaryOperator::Mul => left.wrapping_mul(right),
+        BinaryOperator::Div => left.wrapping_div(right),
+        BinaryOperator::Modulo => left.wrapping_rem(right),
+        BinaryOperator::Pow if right >= 0 => left.wrapping_pow(right as u32),
+        BinaryOperator::Pow => {
+            return Err(Error::InvalidValue {
+                operation: "power",
+                value: "negative integer exponent".into(),
+            });
+        }
+        _ => unreachable!(),
+    };
+    Ok(Value::Int(value))
+}
+
+fn unsigned_value(operator: BinaryOperator, left: u64, right: u64) -> Result<Value> {
+    Ok(Value::UInt(match operator {
+        BinaryOperator::Add => left.wrapping_add(right),
+        BinaryOperator::Sub => left.wrapping_sub(right),
+        BinaryOperator::Mul => left.wrapping_mul(right),
+        BinaryOperator::Div => left / right,
+        BinaryOperator::Modulo => left % right,
+        BinaryOperator::Pow => left.wrapping_pow(right as u32),
+        _ => unreachable!(),
+    }))
+}
+
+fn as_i64(value: Number) -> i64 {
+    match value {
+        Number::UInt(value) => value as i64,
+        Number::Int(value) => value,
+        Number::Float(_) => unreachable!(),
+    }
+}
+
+fn as_u64(value: Number) -> u64 {
+    match value {
+        Number::UInt(value) => value,
+        Number::Int(_) | Number::Float(_) => unreachable!(),
+    }
+}
+
+fn invalid_value(operation: &'static str, value: impl ToString) -> Error {
+    Error::InvalidValue {
+        operation,
+        value: value.to_string(),
+    }
 }
 
 pub(crate) fn select(frame: &Frame, expressions: &[Expr]) -> Result<Frame> {
@@ -125,7 +317,15 @@ pub(crate) fn select(frame: &Frame, expressions: &[Expr]) -> Result<Frame> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sql::expr::{AliasExpr, StandaloneExpr};
+    use crate::sql::expr::{AliasExpr, BinaryExpr, BinaryOperator, StandaloneExpr};
+
+    fn binary(operator: BinaryOperator, left: Expr, right: Expr) -> Expr {
+        Expr::Binary(Box::new(BinaryExpr {
+            operator,
+            left,
+            right,
+        }))
+    }
 
     #[test]
     fn select_columns_literals_aliases_and_len() {
@@ -188,6 +388,107 @@ mod tests {
             Error::InvalidValue {
                 operation: "literal",
                 value: "not-an-int".into()
+            }
+        );
+    }
+
+    #[test]
+    fn binary_broadcasts_scalars_and_propagates_null() {
+        let frame = Frame::new(vec![Column::new("a", vec![Some(1_i64), None, Some(3)])]).unwrap();
+        let result = select(
+            &frame,
+            &[binary(
+                BinaryOperator::Add,
+                Expr::Col("a".into()),
+                Expr::Literal(Literal::Int("2".into())),
+            )],
+        )
+        .unwrap();
+        assert_eq!(
+            result.column("a").unwrap().values(),
+            vec![Value::Int(3), Value::Null, Value::Int(5)]
+        );
+    }
+
+    #[test]
+    fn binary_numeric_promotion_is_float_then_int_then_uint() {
+        let left_val = Value::UInt(5);
+        let right_val = Value::UInt(3);
+        let result = binary_value(BinaryOperator::Add, &left_val, &right_val).unwrap();
+        assert_eq!(result, Value::UInt(8));
+
+        let result = binary_value(BinaryOperator::Add, &Value::UInt(5), &Value::Int(-2)).unwrap();
+        assert_eq!(result, Value::Int(3));
+
+        let result =
+            binary_value(BinaryOperator::Add, &Value::UInt(5), &Value::Float(2.5)).unwrap();
+        assert_eq!(result, Value::Float(7.5));
+    }
+
+    #[test]
+    fn binary_comparison_and_logic_validate_types() {
+        assert!(
+            binary_value(BinaryOperator::Lt, &Value::Int(1), &Value::Float(2.0))
+                .unwrap()
+                .bool("test")
+                .unwrap()
+                .unwrap()
+        );
+        assert!(
+            !binary_value(BinaryOperator::And, &Value::Bool(true), &Value::Bool(false))
+                .unwrap()
+                .bool("test")
+                .unwrap()
+                .unwrap()
+        );
+        let err =
+            binary_value(BinaryOperator::Add, &Value::Bool(true), &Value::Int(1)).unwrap_err();
+        assert_eq!(
+            err,
+            Error::InvalidType {
+                operation: "arithmetic",
+                kind: "bool"
+            }
+        );
+    }
+
+    #[test]
+    fn binary_division_by_zero_returns_error() {
+        let err = binary_value(BinaryOperator::Div, &Value::Int(5), &Value::Int(0)).unwrap_err();
+        assert_eq!(
+            err,
+            Error::InvalidValue {
+                operation: "arithmetic",
+                value: "division by zero".into()
+            }
+        );
+        let err = binary_value(BinaryOperator::Modulo, &Value::Int(5), &Value::Int(0)).unwrap_err();
+        assert_eq!(
+            err,
+            Error::InvalidValue {
+                operation: "arithmetic",
+                value: "division by zero".into()
+            }
+        );
+    }
+
+    #[test]
+    fn binary_rejects_mismatched_row_shapes() {
+        let left = Evaluated {
+            column: Column::new("x", [1_i64, 2]),
+            shape: Shape::Rows,
+        };
+        let right = Evaluated {
+            column: Column::new("y", [1_i64, 2, 3]),
+            shape: Shape::Rows,
+        };
+        let err = apply_binary(BinaryOperator::Add, left, right).unwrap_err();
+        assert_eq!(
+            err,
+            Error::LengthMismatch {
+                operation: "expression",
+                left: 2,
+                right: 3
             }
         );
     }
