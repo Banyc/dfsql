@@ -42,6 +42,15 @@ fn parser_accepts_descending_sort_statement_pairs() {
 }
 
 #[test]
+fn lexer_accepts_regex_backslash_in_string() {
+    // Regression: \d, \., etc in regex patterns triggered Backtrack error
+    assert!(lex(r#""\d""#).is_ok());
+    assert!(lex(r#""\.""#).is_ok());
+    assert!(lex(r#""\+""#).is_ok());
+    assert!(lex(r#""([^.]+\.[^.\d]+|\d+\.\d+\.\d+\.\d+)$""#).is_ok());
+}
+
+#[test]
 fn parser_accepts_extract_all_after_lexer_classifies_all_as_expression_keyword() {
     let parsed = parse(r#"select extract all "[a-z]+" col text"#).unwrap();
     assert!(matches!(parsed.statements.as_slice(),

@@ -336,9 +336,10 @@ fn parse_string(input: &mut &str) -> ModalResult<String> {
                                 })?
                             }
                             _ => {
-                                return Err(winnow::error::ErrMode::Backtrack(
-                                    winnow::error::ContextError::new(),
-                                ));
+                                result.push('\\');
+                                result.push(c);
+                                *input = &input[c.len_utf8()..];
+                                continue;
                             }
                         };
                         result.push(esc);
