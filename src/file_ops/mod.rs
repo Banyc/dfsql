@@ -1,8 +1,9 @@
-use crate::{
-    Frame, MaterializedFrame,
-    atomic_file::{StagedFile, stage_file},
-};
+pub(crate) mod atomic_file;
+pub mod sql_file;
+
+use crate::{Frame, MaterializedFrame};
 use anyhow::{Context, anyhow, bail, ensure};
+use atomic_file::{StagedFile, stage_file};
 use hdv::format::{AtomScheme, AtomType, AtomValue, ValueRow};
 use hdv::io::{
     bin::{HdvBinRawReader, HdvBinRawWriter},

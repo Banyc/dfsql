@@ -1,16 +1,15 @@
 pub mod handler;
-pub mod io;
 pub mod visual;
 
 use std::{collections::HashMap, path::PathBuf};
 
-use crate::atomic_file::StagedFile;
-use crate::cli::{
-    handler::LineExecutor,
-    io::{read_repl_sql_file, read_sql_file, stage_repl_sql_output},
-    visual::SqlHelper,
+use crate::cli::{handler::LineExecutor, visual::SqlHelper};
+use crate::file_ops::{
+    atomic_file::StagedFile,
+    read_df_file,
+    sql_file::{read_repl_sql_file, read_sql_file, stage_repl_sql_output},
+    stage_df_output, write_df_output,
 };
-use crate::file_ops::{read_df_file, stage_df_output, write_df_output};
 use crate::{Executor, MaterializedFrame};
 use anyhow::{anyhow, bail};
 use clap::Parser;

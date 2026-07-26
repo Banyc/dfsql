@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    atomic_file::{StagedFile, stage_file},
+    file_ops::atomic_file::{StagedFile, stage_file},
     sql,
 };
 
