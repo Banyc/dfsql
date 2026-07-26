@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{sql, Error, Executor, Frame};
+use crate::{Error, Executor, Frame, sql};
 
 pub struct LineExecutor {
     history: Vec<String>,

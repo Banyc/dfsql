@@ -37,7 +37,7 @@ impl Cli {
         let mut first_input_name = None;
         for inp in &self.input {
             let (name, path) = inp
-                .split_once('.')
+                .split_once(',')
                 .map(|(n, p)| (n.to_owned(), p))
                 .unwrap_or_else(|| {
                     let p = PathBuf::from(inp);
@@ -50,13 +50,14 @@ impl Cli {
             }
             input.insert(name, df);
         }
-        let first_input_name = first_input_name
-            .ok_or_else(|| anyhow!("Require at least one input data frame from option --input"))?;
+        let first_input_name = first_input_name.ok_or_else(|| {
+            anyhow!("Require at least one input data frame from option `--input`")
+        })?;
         let mut executor = Executor::new(first_input_name, input).unwrap();
         if let Some(sql_file) = &self.sql {
             if self.lazy {
                 bail!(
-                    "lazy option is unavailable if a '.{SQL_EXTENSION}' is provided via the argument 'sql'"
+                    "`lazy` option is unavailable if a `.{SQL_EXTENSION}` is provided via the argument `sql`"
                 );
             }
             let s = read_sql_file(sql_file)?;
@@ -85,59 +86,59 @@ impl Cli {
                 if let Err(e) = handler.execute(line) {
                     eprintln!("{e}");
                     break;
-                }
-            }
-            rl.set_helper(Some(SqlHelper::new()));
-            loop {
-                let line = rl.readline("> ");
-                let line = match line {
-                    Ok(line) => line,
-                    Err(ReadlineError::Eof) | Err(ReadlineError::Interrupted) => {
-                        break;
-                    }
-                    Err(e) => {
-                        eprintln!("{e}");
-                        break;
-                    }
                 };
-                if line.trim() == "exit" || line.trim() == "quit" {
+            }
+        }
+        rl.set_helper(Some(SqlHelper::new()));
+        loop {
+            let line = rl.readline("> ");
+            let line = match line {
+                Ok(line) => line,
+                Err(ReadlineError::Eof) | Err(ReadlineError::Interrupted) => {
                     break;
                 }
-                let _ = rl.add_history_entry(&line);
-                if line.trim() == "schema" {
-                    match handler.frame_mut().collect_schema() {
-                        Ok(schema) => println!("{schema:?}"),
-                        Err(e) => eprintln!("{e}"),
-                    }
-                    continue;
-                }
-                if line.trim().starts_with("save") {
-                    let path = line
-                        .trim()
-                        .split_once(' ')
-                        .and_then(|(cmd, path)| match cmd {
-                            "save" => Some(path),
-                            _ => None,
-                        });
-                    let Some(path) = path else {
-                        eprintln!("save <PATH>");
-                        continue;
-                    };
-                    if let Err(e) = save(&handler, path) {
-                        eprintln!("{e}");
-                    }
-                    continue;
-                }
-                if let Err(e) = upgrade_df(line, &mut handler) {
+                Err(e) => {
                     eprintln!("{e}");
+                    break;
+                }
+            };
+            if line.trim() == "exit" || line.trim() == "quit" {
+                break;
+            }
+            let _ = rl.add_history_entry(&line);
+            if line.trim() == "schema" {
+                match handler.frame_mut().collect_schema() {
+                    Ok(schema) => println!("{schema:?}"),
+                    Err(e) => eprintln!("{e}"),
+                }
+                continue;
+            }
+            if line.trim().starts_with("save") {
+                let path = line
+                    .trim()
+                    .split_once(' ')
+                    .and_then(|(cmd, path)| match cmd {
+                        "save" => Some(path),
+                        _ => None,
+                    });
+                let Some(path) = path else {
+                    eprintln!("save <PATH>");
                     continue;
-                }
-                if !self.lazy
-                    && let Err(e) = self.display_and_write_repl_output(&handler)
-                {
+                };
+                if let Err(e) = save(&handler, path) {
                     eprintln!("{e}");
-                    handler.undo().unwrap();
                 }
+                continue;
+            }
+            if let Err(e) = upgrade_df(line, &mut handler) {
+                eprintln!("{e}");
+                continue;
+            };
+            if !self.lazy
+                && let Err(e) = self.display_and_write_repl_output(&handler)
+            {
+                eprintln!("{e}");
+                handler.undo().unwrap();
             }
         }
         if self.lazy {
