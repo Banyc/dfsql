@@ -26,8 +26,9 @@ fn dynamic_columns_use_typed_data() {
         ColumnData::Mixed(..)
     ));
 }
+#[cfg(not(feature = "polars-backend"))]
 #[test]
-fn root_facade_remains_the_dynamic_backend() {
+fn root_facade_uses_dynamic_backend_without_polars() {
     use dfsql::{
         Executor, Frame,
         dynamic::{Column, ColumnData},
@@ -47,40 +48,50 @@ fn root_facade_remains_the_dynamic_backend() {
         executor.frame().column("id").unwrap().data(),
         ColumnData::Int(_)
     ));
-    assert!(matches!(
-        executor.set_frame_name("missing"),
-        Err(dfsql::Error::FrameNotFound(name)) if name == "missing"
-    ));
-    assert!(matches!(
-        executor.execute(&sql::parse("use missing").unwrap()),
-        Err(dfsql::Error::FrameNotFound(name)) if name == "missing"
-    ));
+    assert!(
+        matches!(executor.set_frame_name("missing"), Err(dfsql::Error::FrameNotFound(name)) if name == "missing")
+    );
+    assert!(
+        matches!(executor.execute(&sql::parse("use missing").unwrap()), Err(dfsql::Error::FrameNotFound(name)) if name == "missing")
+    );
 }
 #[cfg(feature = "polars-backend")]
 #[test]
-fn polars_backend_adds_a_parallel_facade() {
-    use dfsql::PolarsExecutor;
+fn polars_backend_shadows_the_root_facade() {
+    use dfsql::{Executor, Frame, MaterializedFrame};
     use polars::prelude::IntoLazy;
-    let input = polars::df!(
-        "id" => [3_i64, 1, 2],
-        "enabled" => [true, false, true],
-    )
-    .unwrap()
-    .lazy();
-    let mut executor = PolarsExecutor::from_frame("table", input);
+    let input: Frame = polars::df!("id" => [3_i64, 1, 2], "enabled" => [true, false, true])
+        .unwrap()
+        .lazy();
+    let mut executor = Executor::from_frame("table", input);
     executor
         .execute(&sql::parse("filter enabled sort id select id").unwrap())
         .unwrap();
+    let output: MaterializedFrame = executor.collect().unwrap();
     assert_eq!(executor.frame_name(), "table");
-    assert_eq!(executor.collect().unwrap().height(), 2);
-    assert!(matches!(
-        executor.set_frame_name("missing"),
-        Err(dfsql::Error::FrameNotFound(name)) if name == "missing"
-    ));
-    assert!(matches!(
-        executor.execute(&sql::parse("use missing").unwrap()),
-        Err(dfsql::Error::FrameNotFound(name)) if name == "missing"
-    ));
+    assert_eq!(output.height(), 2);
+    assert!(
+        matches!(executor.set_frame_name("missing"), Err(dfsql::Error::FrameNotFound(name)) if name == "missing")
+    );
+    assert!(
+        matches!(executor.execute(&sql::parse("use missing").unwrap()), Err(dfsql::Error::FrameNotFound(name)) if name == "missing")
+    );
+}
+
+#[cfg(feature = "polars-backend")]
+#[test]
+fn explicit_polars_names_alias_the_shadowing_root_facade() {
+    use dfsql::{Executor, Frame, PolarsExecutor, PolarsFrame};
+    use polars::prelude::IntoLazy;
+    fn same_frame_type(frame: Frame) -> PolarsFrame {
+        frame
+    }
+    fn same_executor_type(executor: Executor) -> PolarsExecutor {
+        executor
+    }
+    let frame = polars::df!("id" => [1_i64]).unwrap().lazy();
+    let executor = Executor::from_frame("table", same_frame_type(frame));
+    let _ = same_executor_type(executor);
 }
 #[cfg(feature = "polars-backend")]
 #[test]

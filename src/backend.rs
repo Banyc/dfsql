@@ -1,15 +1,24 @@
 use crate::sql;
 use std::collections::HashMap;
 use thiserror::Error;
+#[cfg(not(feature = "polars-backend"))]
 pub type Frame = crate::dynamic::Frame;
+#[cfg(feature = "polars-backend")]
+pub type Frame = polars::lazy::frame::LazyFrame;
+#[cfg(not(feature = "polars-backend"))]
 pub type MaterializedFrame = crate::dynamic::Frame;
+#[cfg(feature = "polars-backend")]
+pub type MaterializedFrame = polars::frame::DataFrame;
+#[cfg(not(feature = "polars-backend"))]
 pub type Executor = BackendExecutor<DynamicBackend>;
 #[cfg(feature = "polars-backend")]
-pub type PolarsFrame = polars::lazy::frame::LazyFrame;
+pub type Executor = BackendExecutor<PolarsBackend>;
 #[cfg(feature = "polars-backend")]
-pub type PolarsMaterializedFrame = polars::frame::DataFrame;
+pub type PolarsFrame = Frame;
 #[cfg(feature = "polars-backend")]
-pub type PolarsExecutor = BackendExecutor<PolarsBackend>;
+pub type PolarsMaterializedFrame = MaterializedFrame;
+#[cfg(feature = "polars-backend")]
+pub type PolarsExecutor = Executor;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {
