@@ -103,6 +103,30 @@ fn explicit_polars_names_alias_the_shadowing_root_facade() {
 }
 #[cfg(feature = "polars-backend")]
 #[test]
+fn polars_backend_namespace_exposes_concrete_executor() {
+    use dfsql::polars_backend::{Error, Executor, Frame, MaterializedFrame};
+    use polars::prelude::IntoLazy;
+    let input: Frame = polars::df!("id" => [2_i64, 1]).unwrap().lazy();
+    let mut executor = Executor::from_frame("table", input);
+    executor.execute(&sql::parse("sort id").unwrap()).unwrap();
+    let output: MaterializedFrame = executor.collect().unwrap();
+    assert_eq!(
+        output
+            .column("id")
+            .unwrap()
+            .i64()
+            .unwrap()
+            .into_no_null_iter()
+            .collect::<Vec<_>>(),
+        [1, 2]
+    );
+    assert!(
+        matches!(executor.set_frame_name("missing"), Err(Error::FrameNotFound(name)) if name == "missing")
+    );
+}
+
+#[cfg(feature = "polars-backend")]
+#[test]
 fn dynamic_backend_remains_available_when_polars_is_selected() {
     use dfsql::dynamic::{Column, Executor, Frame};
     let input = Frame::new(vec![Column::new("id", [2_i64, 1])]).unwrap();

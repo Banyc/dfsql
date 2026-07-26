@@ -26,7 +26,7 @@ pub enum Error {
     Dynamic(#[from] crate::dynamic::Error),
     #[cfg(feature = "polars-backend")]
     #[error(transparent)]
-    Polars(#[from] crate::polars_backend::ApplyStatError),
+    Polars(#[from] crate::polars_backend::Error),
     #[error("data frame does not exist: {0}")]
     FrameNotFound(String),
 }
@@ -166,7 +166,7 @@ impl private::Sealed for PolarsBackend {}
 impl Backend for PolarsBackend {
     type Frame = polars::lazy::frame::LazyFrame;
     type MaterializedFrame = polars::frame::DataFrame;
-    type Inner = crate::polars_backend::DfExecutor;
+    type Inner = crate::polars_backend::Executor;
     fn from_frame(frame_name: String, frame: Self::Frame) -> Self::Inner {
         Self::Inner::from_frame(frame_name, frame)
     }
@@ -205,16 +205,11 @@ impl Backend for PolarsBackend {
     }
     fn execute(inner: &mut Self::Inner, statements: &sql::S) -> Result<()> {
         inner.execute(statements).map_err(|error| match error {
-            crate::polars_backend::ApplyStatError::DfNotExists(name) => Error::FrameNotFound(name),
+            crate::polars_backend::Error::FrameNotFound(name) => Error::FrameNotFound(name),
             error => Error::Polars(error),
         })
     }
     fn collect(inner: &Self::Inner) -> Result<Self::MaterializedFrame> {
-        inner
-            .frame()
-            .clone()
-            .collect()
-            .map_err(crate::polars_backend::ApplyStatError::from)
-            .map_err(Error::from)
+        inner.collect().map_err(Error::from)
     }
 }

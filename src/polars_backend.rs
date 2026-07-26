@@ -5,95 +5,92 @@ use thiserror::Error;
 
 use crate::sql::{self, SortOrder};
 
-pub struct DfExecutor {
-    df_name: String,
-    input: HashMap<String, LazyFrame>,
+pub type Frame = LazyFrame;
+pub type MaterializedFrame = DataFrame;
+pub type Result<T> = std::result::Result<T, Error>;
+
+pub struct Executor {
+    frame_name: String,
+    input: HashMap<String, Frame>,
 }
-impl DfExecutor {
-    pub fn from_frame(frame_name: impl Into<String>, frame: LazyFrame) -> Self {
+
+impl Executor {
+    pub fn from_frame(frame_name: impl Into<String>, frame: Frame) -> Self {
         let frame_name = frame_name.into();
         Self {
             input: HashMap::from([(frame_name.clone(), frame)]),
-            df_name: frame_name,
+            frame_name,
         }
     }
 
-    pub fn new(df_name: String, input: HashMap<String, LazyFrame>) -> Option<Self> {
-        input.get(&df_name)?;
-        Some(Self { df_name, input })
+    pub fn new(frame_name: impl Into<String>, input: HashMap<String, Frame>) -> Option<Self> {
+        let frame_name = frame_name.into();
+        input
+            .contains_key(&frame_name)
+            .then_some(Self { frame_name, input })
     }
 
-    pub fn input(&self) -> &HashMap<String, LazyFrame> {
+    pub fn input(&self) -> &HashMap<String, Frame> {
         &self.input
     }
-    pub fn into_input(self) -> HashMap<String, LazyFrame> {
+
+    pub fn into_input(self) -> HashMap<String, Frame> {
         self.input
     }
-    pub fn insert_frame(
-        &mut self,
-        frame_name: impl Into<String>,
-        frame: LazyFrame,
-    ) -> Option<LazyFrame> {
+
+    pub fn insert_frame(&mut self, frame_name: impl Into<String>, frame: Frame) -> Option<Frame> {
         self.input.insert(frame_name.into(), frame)
     }
 
     pub fn frame_name(&self) -> &str {
-        &self.df_name
-    }
-    pub fn df_name(&self) -> &String {
-        &self.df_name
+        &self.frame_name
     }
 
-    pub fn df(&self) -> &LazyFrame {
-        &self.input[&self.df_name]
-    }
-    pub fn frame(&self) -> &LazyFrame {
-        self.df()
-    }
-    pub fn df_mut(&mut self) -> &mut LazyFrame {
-        self.input.get_mut(&self.df_name).unwrap()
-    }
-    pub fn frame_mut(&mut self) -> &mut LazyFrame {
-        self.df_mut()
-    }
-    pub fn set_frame_name(&mut self, frame_name: impl Into<String>) -> Result<(), DfNotExists> {
-        self.set_df_name(frame_name.into())
+    pub fn frame(&self) -> &Frame {
+        &self.input[&self.frame_name]
     }
 
-    pub fn set_df_name(&mut self, df_name: String) -> Result<(), DfNotExists> {
-        self.input.get(&df_name).ok_or(DfNotExists)?;
-        self.df_name = df_name;
+    pub fn frame_mut(&mut self) -> &mut Frame {
+        self.input
+            .get_mut(&self.frame_name)
+            .expect("the active frame is always present")
+    }
+
+    pub fn set_frame_name(&mut self, frame_name: impl Into<String>) -> Result<()> {
+        let frame_name = frame_name.into();
+        if !self.input.contains_key(&frame_name) {
+            return Err(Error::FrameNotFound(frame_name));
+        }
+        self.frame_name = frame_name;
         Ok(())
     }
 
-    pub fn set_df(&mut self, df: LazyFrame) {
-        *self.input.get_mut(&self.df_name).unwrap() = df;
-    }
-    pub fn set_frame(&mut self, frame: LazyFrame) {
-        self.set_df(frame);
+    pub fn set_frame(&mut self, frame: Frame) {
+        self.input.insert(self.frame_name.clone(), frame);
     }
 
-    pub fn execute(&mut self, s: &sql::S) -> Result<(), ApplyStatError> {
-        let mut df = self.df().clone();
-        for stat in &s.statements {
-            df = apply_stat(df, stat, &mut self.input)?;
+    pub fn execute(&mut self, statements: &sql::S) -> Result<()> {
+        let mut frame = self.frame().clone();
+        for stat in &statements.statements {
+            frame = apply_stat(frame, stat, &mut self.input)?;
             if let sql::stat::Stat::Use(r#use) = stat {
-                self.set_df_name(r#use.df_name.clone()).unwrap();
+                self.set_frame_name(r#use.df_name.clone())?;
             }
-            self.set_df(df.clone());
+            self.set_frame(frame.clone());
         }
         Ok(())
     }
+
+    pub fn collect(&self) -> Result<MaterializedFrame> {
+        self.frame().clone().collect().map_err(Error::from)
+    }
 }
-#[derive(Debug, Error, Clone)]
-#[error("Data frame does not exist")]
-pub struct DfNotExists;
 
 fn apply_stat(
-    df: LazyFrame,
+    df: Frame,
     stat: &sql::stat::Stat,
-    others: &mut HashMap<String, LazyFrame>,
-) -> Result<LazyFrame, ApplyStatError> {
+    others: &mut HashMap<String, Frame>,
+) -> Result<Frame> {
     Ok(match stat {
         sql::stat::Stat::Select(select) => {
             let columns: Vec<_> = select.columns.iter().map(convert_expr).collect();
@@ -123,7 +120,7 @@ fn apply_stat(
             sql::stat::JoinStat::SingleCol(join) => {
                 let other = others
                     .get(&join.other)
-                    .ok_or_else(|| ApplyStatError::DfNotExists(join.other.to_string()))?
+                    .ok_or_else(|| Error::FrameNotFound(join.other.to_string()))?
                     .clone();
                 let left_on = convert_expr(&join.left_on);
                 let right_on = match &join.right_on {
@@ -142,7 +139,7 @@ fn apply_stat(
             let df_name = &r#use.df_name;
             others
                 .get(df_name)
-                .ok_or_else(|| ApplyStatError::DfNotExists(df_name.clone()))?
+                .ok_or_else(|| Error::FrameNotFound(df_name.clone()))?
                 .clone()
         }
         sql::stat::Stat::Clone(clone) => {
@@ -155,11 +152,11 @@ fn apply_stat(
 }
 
 #[derive(Debug, Error)]
-pub enum ApplyStatError {
+pub enum Error {
     #[error("LazyFrame::collect: {0}")]
-    DfCollect(#[from] PolarsError),
-    #[error("LazyFrame not exists: {0}")]
-    DfNotExists(String),
+    Collect(#[from] PolarsError),
+    #[error("data frame does not exist: {0}")]
+    FrameNotFound(String),
 }
 
 fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
@@ -317,22 +314,19 @@ mod tests {
         let s = "filter x = 0";
         let s = sql::parse(s).unwrap();
         let df = df!("x" => [0, 1]).unwrap();
-        let mut executor = DfExecutor::new(
-            "a".to_string(),
-            HashMap::from_iter([("a".to_string(), df.lazy())]),
-        )
-        .unwrap();
+        let mut executor = Executor::new("a".to_string(), HashMap::from_iter([("a".to_string(), df.lazy())])).unwrap();
         executor.execute(&s).unwrap();
-        executor.df().clone().collect().unwrap();
+        executor.collect().unwrap();
     }
 
     #[test]
     fn right_join_uses_each_side_key_after_swapping_inputs() {
         let left = df!("left_id" => [1, 2], "left_value" => ["one", "two"]).unwrap().lazy();
         let right = df!("right_id" => [2, 3], "right_value" => ["two", "three"]).unwrap().lazy();
-        let mut executor = DfExecutor::new("left".to_string(), HashMap::from_iter([("left".to_string(), left), ("other".to_string(), right)])).unwrap();
+        let mut executor = Executor::new("left".to_string(),
+            HashMap::from_iter([("left".to_string(), left), ("other".to_string(), right)])).unwrap();
         executor.execute(&sql::parse("right join other on left_id right_id").unwrap()).unwrap();
-        let joined = executor.df().clone().collect().unwrap();
+        let joined = executor.collect().unwrap();
         assert_eq!(joined.height(), 2);
         assert_eq!(joined.column("right_id").unwrap().i32().unwrap().into_no_null_iter().collect::<Vec<_>>(), [2, 3]);
     }
