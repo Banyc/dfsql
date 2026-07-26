@@ -1,12 +1,16 @@
+pub mod handler;
+pub mod io;
+pub mod visual;
+
 use std::{collections::HashMap, path::PathBuf};
 
-use crate::{
-    Executor,
-    file_ops::{read_df_file, write_df_output},
+use crate::Executor;
+use crate::cli::{
     handler::LineExecutor,
     io::{read_repl_sql_file, read_sql_file, write_repl_sql_output},
     visual::SqlHelper,
 };
+use crate::file_ops::{read_df_file, write_df_output};
 use anyhow::{anyhow, bail};
 use clap::Parser;
 use polars::prelude::*;

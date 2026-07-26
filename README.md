@@ -27,14 +27,14 @@ The dynamic backend is still compiled and remains available explicitly through `
 The Polars backend is available explicitly through `dfsql::polars_backend::{Executor,Frame}`
 when the feature is enabled.
 
-The `cli` feature enables `file-ops`, so the
-command-line application uses Polars.
+The `cli` feature enables the
+command-line application that uses Polars.
 
 ## File formats
 
-With the `file-ops` feature, `dfsql::file_ops` reads and writes CSV (`.csv`),
+The `cli` feature reads and writes CSV (`.csv`),
 JSON arrays (`.json`), JSON Lines (`.jsonl` or `.ndjson`), HDV binary (`.hdvb`),
-and HDV text (`.hdvt`) files. The `cli` feature includes `file-ops`.
+and HDV text (`.hdvt`) files via `dfsql::cli::file_ops`.
 
 HDV conversion uses the core `hdv` crate without its Polars feature. The
 Polars conversion lives in dfsql, so upgrading Polars does not require a
