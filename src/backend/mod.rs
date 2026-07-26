@@ -1,4 +1,6 @@
 pub mod dynamic;
+#[cfg(not(feature = "polars-backend"))]
+mod dynamic_backend;
 #[cfg(feature = "polars-backend")]
 mod polars_backend;
 
@@ -22,13 +24,19 @@ pub struct MaterializedFrame {
 }
 
 #[cfg(not(feature = "polars-backend"))]
-pub type Frame = dynamic::Frame;
+#[derive(Clone)]
+pub struct Frame {
+    inner: dynamic::Frame,
+}
 
 #[cfg(not(feature = "polars-backend"))]
-pub type MaterializedFrame = dynamic::Frame;
+#[derive(Clone, Debug)]
+pub struct MaterializedFrame {
+    inner: dynamic::Frame,
+}
 
 #[cfg(not(feature = "polars-backend"))]
-type InnerExecutor = dynamic::Executor;
+type InnerExecutor = dynamic_backend::Executor;
 
 #[cfg(feature = "polars-backend")]
 type InnerExecutor = polars_backend::Executor;
@@ -42,7 +50,6 @@ pub struct Executor {
 pub enum Error {
     #[error(transparent)]
     Dynamic(#[from] dynamic::Error),
-    #[cfg(feature = "polars-backend")]
     #[error("backend error: {0}")]
     Backend(String),
     #[error("data frame does not exist: {0}")]
@@ -52,7 +59,7 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(feature = "polars-backend")]
-fn map_inner_error(error: impl ToString) -> Error {
+fn map_backend_error(error: impl ToString) -> Error {
     Error::Backend(error.to_string())
 }
 
@@ -65,7 +72,7 @@ impl Frame {
     pub fn from_dynamic(frame: dynamic::Frame) -> Result<Self> {
         polars_backend::frame_from_dynamic(frame)
             .map(Self::from_inner)
-            .map_err(map_inner_error)
+            .map_err(map_backend_error)
     }
 
     pub fn collect(&self) -> Result<MaterializedFrame> {
@@ -88,6 +95,29 @@ impl Frame {
         &self,
     ) -> polars::prelude::PolarsResult<polars::prelude::SchemaRef> {
         self.inner.clone().collect_schema()
+    }
+}
+
+#[cfg(not(feature = "polars-backend"))]
+impl Frame {
+    pub fn new(columns: Vec<dynamic::Column>) -> Result<Self> {
+        Self::from_dynamic(dynamic::Frame::new(columns)?)
+    }
+
+    pub fn from_dynamic(frame: dynamic::Frame) -> Result<Self> {
+        Ok(Self::from_inner(frame))
+    }
+
+    pub fn collect(&self) -> Result<MaterializedFrame> {
+        Ok(MaterializedFrame::from_inner(self.inner.clone()))
+    }
+
+    pub(crate) fn from_inner(inner: dynamic::Frame) -> Self {
+        Self { inner }
+    }
+
+    pub(crate) fn inner(&self) -> &dynamic::Frame {
+        &self.inner
     }
 }
 
@@ -114,7 +144,7 @@ impl MaterializedFrame {
     }
 
     pub fn to_dynamic(&self) -> Result<dynamic::Frame> {
-        polars_backend::frame_to_dynamic(&self.inner).map_err(map_inner_error)
+        polars_backend::frame_to_dynamic(&self.inner).map_err(map_backend_error)
     }
 
     pub fn into_frame(self) -> Frame {
@@ -137,15 +167,65 @@ impl MaterializedFrame {
 }
 
 #[cfg(not(feature = "polars-backend"))]
+impl MaterializedFrame {
+    pub fn height(&self) -> usize {
+        self.inner.height()
+    }
+
+    pub fn width(&self) -> usize {
+        self.inner.width()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    pub fn column_names(&self) -> Vec<String> {
+        self.inner
+            .column_names()
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    pub fn to_dynamic(&self) -> Result<dynamic::Frame> {
+        Ok(self.inner.clone())
+    }
+
+    pub fn into_frame(self) -> Frame {
+        Frame::from_inner(self.inner)
+    }
+
+    pub(crate) fn from_inner(inner: dynamic::Frame) -> Self {
+        Self { inner }
+    }
+}
+
+#[cfg(not(feature = "polars-backend"))]
+fn map_executor_error(error: dynamic::Error) -> Error {
+    match error {
+        dynamic::Error::FrameNotFound(name) => Error::FrameNotFound(name),
+        error => Error::Dynamic(error),
+    }
+}
+
+#[cfg(feature = "polars-backend")]
+fn map_executor_error(error: polars_backend::Error) -> Error {
+    match error {
+        polars_backend::Error::FrameNotFound(name) => Error::FrameNotFound(name),
+        error => Error::Backend(error.to_string()),
+    }
+}
+
 impl Executor {
     pub fn from_frame(frame_name: impl Into<String>, frame: Frame) -> Self {
         Self {
-            inner: dynamic::Executor::from_frame(frame_name, frame),
+            inner: InnerExecutor::from_frame(frame_name, frame),
         }
     }
 
     pub fn new(frame_name: impl Into<String>, input: HashMap<String, Frame>) -> Option<Self> {
-        dynamic::Executor::new(frame_name, input).map(|inner| Self { inner })
+        InnerExecutor::new(frame_name, input).map(|inner| Self { inner })
     }
 
     pub fn input(&self) -> &HashMap<String, Frame> {
@@ -175,10 +255,7 @@ impl Executor {
     pub fn set_frame_name(&mut self, frame_name: impl Into<String>) -> Result<()> {
         self.inner
             .set_frame_name(frame_name)
-            .map_err(|error| match error {
-                dynamic::Error::FrameNotFound(name) => Error::FrameNotFound(name),
-                error => Error::Dynamic(error),
-            })
+            .map_err(map_executor_error)
     }
 
     pub fn set_frame(&mut self, frame: Frame) {
@@ -186,74 +263,10 @@ impl Executor {
     }
 
     pub fn execute(&mut self, statements: &sql::S) -> Result<()> {
-        self.inner.execute(statements).map_err(|error| match error {
-            dynamic::Error::FrameNotFound(name) => Error::FrameNotFound(name),
-            error => Error::Dynamic(error),
-        })
+        self.inner.execute(statements).map_err(map_executor_error)
     }
 
     pub fn collect(&self) -> Result<MaterializedFrame> {
-        Ok(self.inner.collect()?)
-    }
-}
-
-#[cfg(feature = "polars-backend")]
-impl Executor {
-    pub fn from_frame(frame_name: impl Into<String>, frame: Frame) -> Self {
-        Self {
-            inner: polars_backend::Executor::from_frame(frame_name, frame),
-        }
-    }
-
-    pub fn new(frame_name: impl Into<String>, input: HashMap<String, Frame>) -> Option<Self> {
-        polars_backend::Executor::new(frame_name, input).map(|inner| Self { inner })
-    }
-
-    pub fn input(&self) -> &HashMap<String, Frame> {
-        self.inner.input()
-    }
-
-    pub fn into_input(self) -> HashMap<String, Frame> {
-        self.inner.into_input()
-    }
-
-    pub fn insert_frame(&mut self, frame_name: impl Into<String>, frame: Frame) -> Option<Frame> {
-        self.inner.insert_frame(frame_name, frame)
-    }
-
-    pub fn frame_name(&self) -> &str {
-        self.inner.frame_name()
-    }
-
-    pub fn frame(&self) -> &Frame {
-        self.inner.frame()
-    }
-
-    pub fn frame_mut(&mut self) -> &mut Frame {
-        self.inner.frame_mut()
-    }
-
-    pub fn set_frame_name(&mut self, frame_name: impl Into<String>) -> Result<()> {
-        let name = frame_name.into();
-        self.inner
-            .set_frame_name(name.clone())
-            .map_err(|_| Error::FrameNotFound(name))
-    }
-
-    pub fn set_frame(&mut self, frame: Frame) {
-        self.inner.set_frame(frame);
-    }
-
-    pub fn execute(&mut self, statements: &sql::S) -> Result<()> {
-        self.inner.execute(statements).map_err(|error| match error {
-            polars_backend::Error::FrameNotFound(name) => Error::FrameNotFound(name),
-            error => Error::Backend(error.to_string()),
-        })
-    }
-
-    pub fn collect(&self) -> Result<MaterializedFrame> {
-        self.inner
-            .collect()
-            .map_err(|error| Error::Backend(error.to_string()))
+        self.inner.collect().map_err(map_executor_error)
     }
 }

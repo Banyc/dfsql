@@ -52,16 +52,19 @@ fn root_facade_uses_dynamic_backend_without_polars() {
         .unwrap();
     assert_eq!(executor.frame_name(), "table");
     assert_eq!(executor.collect().unwrap().height(), 2);
+    let current = executor.collect().unwrap().to_dynamic().unwrap();
     assert!(matches!(
-        executor.frame().column("id").unwrap().data(),
+        current.column("id").unwrap().data(),
         ColumnData::Int(_)
     ));
-    assert!(
-        matches!(executor.set_frame_name("missing"), Err(dfsql::Error::FrameNotFound(name)) if name == "missing")
-    );
-    assert!(
-        matches!(executor.execute(&sql::parse("use missing").unwrap()), Err(dfsql::Error::FrameNotFound(name)) if name == "missing")
-    );
+    assert!(matches!(
+        executor.set_frame_name("missing"),
+        Err(dfsql::Error::FrameNotFound(name)) if name == "missing"
+    ));
+    assert!(matches!(
+        executor.execute(&sql::parse("use missing").unwrap()),
+        Err(dfsql::Error::FrameNotFound(name)) if name == "missing"
+    ));
 }
 #[cfg(feature = "polars-backend")]
 #[test]
