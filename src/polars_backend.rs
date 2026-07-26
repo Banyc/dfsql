@@ -162,10 +162,7 @@ pub enum Error {
 fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
     match expr {
         sql::expr::Expr::Col(name) => col(name),
-        sql::expr::Expr::Exclude(exclude) => {
-            let any = col("*");
-            any.exclude(&exclude.columns)
-        }
+        sql::expr::Expr::Exclude(exclude) => all().exclude_cols(&exclude.columns).as_expr(),
         sql::expr::Expr::Literal(literal) => match literal {
             sql::lexer::Literal::String(string) => lit(string.clone()),
             sql::lexer::Literal::Int(number) => lit(number.parse::<i64>().unwrap()),
@@ -276,7 +273,7 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
         }
         sql::expr::Expr::Log(log) => {
             let expr = convert_expr(&log.expr);
-            expr.log(log.base)
+            expr.log(lit(log.base))
         }
         sql::expr::Expr::Str(str) => match str.as_ref() {
             sql::expr::StrExpr::Contains(contains) => {
@@ -317,6 +314,21 @@ mod tests {
         let mut executor = Executor::new("a".to_string(), HashMap::from_iter([("a".to_string(), df.lazy())])).unwrap();
         executor.execute(&s).unwrap();
         executor.collect().unwrap();
+    }
+
+    #[test]
+    fn selector_exclusion_and_log_use_current_polars_expressions() {
+      let frame = df!("x" => [1.0_f64, 10.0], "drop" => [false, true]).unwrap().lazy();
+      let mut executor = Executor::from_frame("input", frame);
+      executor.execute(&sql::parse("select exclude drop alias log_x log 10 x").unwrap()).unwrap();
+      let output = executor.collect().unwrap();
+      assert_eq!(output.width(), 2);
+      assert!(output.column("x").is_ok());
+      assert!(output.column("drop").is_err());
+      assert_eq!(
+        output.column("log_x").unwrap().f64().unwrap().into_no_null_iter().collect::<Vec<_>>(),
+        [0.0, 1.0]
+      );
     }
 
     #[test]

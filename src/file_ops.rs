@@ -1,5 +1,5 @@
 use crate::{Frame, MaterializedFrame};
-use anyhow::{Context, anyhow, bail, ensure};
+use anyhow::{anyhow, bail, ensure, Context};
 use hdv::format::{AtomScheme, AtomType, AtomValue, ValueRow};
 use hdv::io::{
     bin::{HdvBinRawReader, HdvBinRawWriter},
@@ -45,7 +45,7 @@ impl FileFormat {
 pub fn read_df_file(path: impl AsRef<Path>) -> anyhow::Result<Frame> {
     let path = path.as_ref();
     match FileFormat::from_path(path)? {
-        FileFormat::Csv => Ok(LazyCsvReader::new(path)
+        FileFormat::Csv => Ok(LazyCsvReader::new(PlRefPath::try_from_path(path)?)
             .with_has_header(true)
             .with_infer_schema_length(None)
             .finish()?),
@@ -56,7 +56,7 @@ pub fn read_df_file(path: impl AsRef<Path>) -> anyhow::Result<Frame> {
                 .finish()?
                 .lazy())
         }
-        FileFormat::JsonLines => Ok(LazyJsonLineReader::new(path)
+        FileFormat::JsonLines => Ok(LazyJsonLineReader::new(PlRefPath::try_from_path(path)?)
             .with_infer_schema_length(None)
             .finish()?),
         FileFormat::HdvBinary => Ok(read_hdv_binary(open_input(path)?)?.lazy()),
@@ -191,7 +191,7 @@ impl<R: BufRead> BufRead for UnexpectedEofReader<R> {
 fn frame_to_hdv(frame: &MaterializedFrame) -> anyhow::Result<(Vec<AtomScheme>, Vec<ValueRow>)> {
     let mut header = Vec::with_capacity(frame.width());
     let mut columns: Vec<Vec<Option<AtomValue>>> = Vec::with_capacity(frame.width());
-    for column in frame.get_columns() {
+    for column in frame.columns() {
         let (atom_type, values) = match column.dtype() {
             DataType::Boolean => (
                 AtomType::Bool,
@@ -256,7 +256,8 @@ fn frame_to_hdv(frame: &MaterializedFrame) -> anyhow::Result<(Vec<AtomScheme>, V
                     .collect(),
             ),
             data_type => bail!(
-                "HDV does not support Polars data type '{data_type}' in column '{}'",
+                "HDV does not support Polars data type {} in column {}",
+                data_type,
                 column.name()
             ),
         };
@@ -318,7 +319,7 @@ fn frame_from_hdv(header: &[AtomScheme], rows: &[ValueRow]) -> anyhow::Result<Ma
         };
         columns.push(column);
     }
-    Ok(MaterializedFrame::new(columns)?)
+    Ok(MaterializedFrame::new(rows.len(), columns)?)
 }
 
 fn hdv_column<T>(
@@ -420,18 +421,21 @@ mod tests {
 
     #[test]
     fn hdv_binary_round_trip_preserves_supported_types_and_nulls() {
-        let frame = MaterializedFrame::new(vec![
-            Column::new("bool".into(), vec![Some(true), None]),
-            Column::new("uint".into(), vec![Some(1_u64), None]),
-            Column::new("int".into(), vec![Some(-1_i64), None]),
-            Column::new("f32".into(), vec![Some(1.5_f32), None]),
-            Column::new("f64".into(), vec![Some(2.5_f64), None]),
-            Column::new(
-                "string".into(),
-                vec![Some("one".to_owned()), None::<String>],
-            ),
-            Column::new("bytes".into(), vec![Some(vec![1_u8, 2]), None::<Vec<u8>>]),
-        ])
+        let frame = MaterializedFrame::new(
+            2,
+            vec![
+                Column::new("bool".into(), vec![Some(true), None]),
+                Column::new("uint".into(), vec![Some(1_u64), None]),
+                Column::new("int".into(), vec![Some(-1_i64), None]),
+                Column::new("f32".into(), vec![Some(1.5_f32), None]),
+                Column::new("f64".into(), vec![Some(2.5_f64), None]),
+                Column::new(
+                    "string".into(),
+                    vec![Some("one".to_owned()), None::<String>],
+                ),
+                Column::new("bytes".into(), vec![Some(vec![1_u8, 2]), None::<Vec<u8>>]),
+            ],
+        )
         .unwrap();
         let actual = round_trip(&frame, "hdvb");
         assert!(frame.equals_missing(&actual));
@@ -439,17 +443,20 @@ mod tests {
 
     #[test]
     fn hdv_text_round_trip_preserves_supported_text_types() {
-        let frame = MaterializedFrame::new(vec![
-            Column::new("bool".into(), vec![Some(true), None]),
-            Column::new("uint".into(), vec![Some(1_u64), None]),
-            Column::new("int".into(), vec![Some(-1_i64), None]),
-            Column::new("f32".into(), vec![Some(1.5_f32), None]),
-            Column::new("f64".into(), vec![Some(2.5_f64), None]),
-            Column::new(
-                "string".into(),
-                vec![Some("one".to_owned()), None::<String>],
-            ),
-        ])
+        let frame = MaterializedFrame::new(
+            2,
+            vec![
+                Column::new("bool".into(), vec![Some(true), None]),
+                Column::new("uint".into(), vec![Some(1_u64), None]),
+                Column::new("int".into(), vec![Some(-1_i64), None]),
+                Column::new("f32".into(), vec![Some(1.5_f32), None]),
+                Column::new("f64".into(), vec![Some(2.5_f64), None]),
+                Column::new(
+                    "string".into(),
+                    vec![Some("one".to_owned()), None::<String>],
+                ),
+            ],
+        )
         .unwrap();
         let actual = round_trip(&frame, "hdvt");
         assert!(frame.equals_missing(&actual));

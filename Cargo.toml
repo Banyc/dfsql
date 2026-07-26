@@ -14,7 +14,7 @@ hdv = { version = "0.7", default-features = false, optional = true }
 winnow = "1"
 clap = { version = "4", features = ["derive"], optional = true }
 fancy-regex = { version = "0.18", optional = true }
-polars = { version = "0.47", features = [
+polars = { version = "0.54.4", features = [
     "abs",
     "lazy",
     "regex",
