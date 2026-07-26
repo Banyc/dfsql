@@ -1,39 +1,41 @@
 use std::collections::HashMap;
 
-use crate::{
-    df::{ApplyStatError, DfExecutor},
-    sql,
-};
-use polars::lazy::frame::LazyFrame;
+use crate::{sql, Error, Executor, Frame};
 
 pub struct LineExecutor {
     history: Vec<String>,
-    original_df_name: String,
-    original_input: HashMap<String, LazyFrame>,
-    executor: DfExecutor,
+    original_frame_name: String,
+    original_input: HashMap<String, Frame>,
+    executor: Executor,
 }
 
 impl LineExecutor {
-    pub fn new(executor: DfExecutor) -> Self {
-        let original_df_name = executor.df_name().clone();
+    pub fn new(executor: Executor) -> Self {
+        let original_frame_name = executor.frame_name().to_owned();
         let original_input = executor.input().clone();
         Self {
             history: vec![],
-            original_df_name,
+            original_frame_name,
             original_input,
             executor,
         }
     }
 
     pub fn reset(&mut self) {
-        self.executor =
-            DfExecutor::new(self.original_df_name.clone(), self.original_input.clone()).unwrap();
+        self.executor = Executor::new(
+            self.original_frame_name.clone(),
+            self.original_input.clone(),
+        )
+        .unwrap();
         self.history.clear();
     }
 
     pub fn undo(&mut self) -> anyhow::Result<()> {
-        self.executor =
-            DfExecutor::new(self.original_df_name.clone(), self.original_input.clone()).unwrap();
+        self.executor = Executor::new(
+            self.original_frame_name.clone(),
+            self.original_input.clone(),
+        )
+        .unwrap();
         self.history.pop();
         let sql = self.history.iter().map(|s| sql::parse(s).unwrap());
         apply_history(sql, &mut self.executor)?;
@@ -42,10 +44,10 @@ impl LineExecutor {
 
     pub fn execute(&mut self, line: String) -> anyhow::Result<()> {
         let s = sql::parse(&line)?;
-        let df_name = self.executor.df_name().clone();
+        let frame_name = self.executor.frame_name().to_owned();
         let input = self.executor.input().clone();
         if let Err(error) = self.executor.execute(&s) {
-            self.executor = DfExecutor::new(df_name, input)
+            self.executor = Executor::new(frame_name, input)
                 .expect("the active data frame existed before line execution");
             return Err(error.into());
         }
@@ -55,11 +57,12 @@ impl LineExecutor {
         Ok(())
     }
 
-    pub fn df(&self) -> &LazyFrame {
-        self.executor.df()
+    pub fn frame(&self) -> &Frame {
+        self.executor.frame()
     }
-    pub fn df_mut(&mut self) -> &mut LazyFrame {
-        self.executor.df_mut()
+
+    pub fn frame_mut(&mut self) -> &mut Frame {
+        self.executor.frame_mut()
     }
 
     pub fn history(&self) -> &Vec<String> {
@@ -67,10 +70,7 @@ impl LineExecutor {
     }
 }
 
-fn apply_history(
-    sql: impl Iterator<Item = sql::S>,
-    executor: &mut DfExecutor,
-) -> Result<(), ApplyStatError> {
+fn apply_history(sql: impl Iterator<Item = sql::S>, executor: &mut Executor) -> Result<(), Error> {
     for s in sql {
         executor.execute(&s)?;
     }
@@ -87,11 +87,11 @@ mod tests {
     fn failed_line_restores_all_executor_state() {
         let first = polars::df!("id" => [1_i64]).unwrap().lazy();
         let other = polars::df!("id" => [2_i64]).unwrap().lazy();
-        let executor = DfExecutor::new("first".to_string(), HashMap::from([("first".to_string(), first), ("other".to_string(), other)])).unwrap();
+        let executor = Executor::new("first", HashMap::from([("first".to_string(), first), ("other".to_string(), other)])).unwrap();
         let mut handler = LineExecutor::new(executor);
         let error = handler.execute("use other clone leaked use missing".into()).unwrap_err();
         assert!(error.to_string().contains("missing"));
-        assert_eq!(handler.executor.df_name(), "first");
+        assert_eq!(handler.executor.frame_name(), "first");
         assert!(!handler.executor.input().contains_key("leaked"));
         assert!(handler.history().is_empty());
     }

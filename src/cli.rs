@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use crate::{
-    df::DfExecutor,
+    Executor,
     handler::LineExecutor,
     io::{read_repl_sql_file, read_sql_file, write_repl_sql_output},
     visual::SqlHelper,
@@ -37,7 +37,7 @@ impl Cli {
         let mut first_input_name = None;
         for inp in &self.input {
             let (name, path) = inp
-                .split_once(',')
+                .split_once('.')
                 .map(|(n, p)| (n.to_owned(), p))
                 .unwrap_or_else(|| {
                     let p = PathBuf::from(inp);
@@ -50,22 +50,18 @@ impl Cli {
             }
             input.insert(name, df);
         }
-        let first_input_name = first_input_name.ok_or_else(|| {
-            anyhow!("Require at least one input data frame from option `--input`")
-        })?;
-        let mut executor = DfExecutor::new(first_input_name, input).unwrap();
-
+        let first_input_name = first_input_name
+            .ok_or_else(|| anyhow!("Require at least one input data frame from option --input"))?;
+        let mut executor = Executor::new(first_input_name, input).unwrap();
         if let Some(sql_file) = &self.sql {
-            // Non-interactive mode
             if self.lazy {
                 bail!(
-                    "`lazy` option is unavailable if a `.{SQL_EXTENSION}` is provided via the argument `sql`"
+                    "lazy option is unavailable if a '.{SQL_EXTENSION}' is provided via the argument 'sql'"
                 );
             }
-
             let s = read_sql_file(sql_file)?;
             executor.execute(&s)?;
-            let df = executor.df().clone().collect()?;
+            let df = executor.collect()?;
             match &self.output {
                 Some(output) => write_df_output(df, output)?,
                 None => println!("{df}"),
@@ -82,7 +78,6 @@ impl Cli {
             } else {
                 vec![]
             };
-
             self.display_and_write_repl_output(&handler)?;
             for line in lines {
                 println!("> {line}");
@@ -90,61 +85,59 @@ impl Cli {
                 if let Err(e) = handler.execute(line) {
                     eprintln!("{e}");
                     break;
+                }
+            }
+            rl.set_helper(Some(SqlHelper::new()));
+            loop {
+                let line = rl.readline("> ");
+                let line = match line {
+                    Ok(line) => line,
+                    Err(ReadlineError::Eof) | Err(ReadlineError::Interrupted) => {
+                        break;
+                    }
+                    Err(e) => {
+                        eprintln!("{e}");
+                        break;
+                    }
                 };
-            }
-        }
-        rl.set_helper(Some(SqlHelper::new()));
-        loop {
-            let line = rl.readline("> ");
-            let line = match line {
-                Ok(line) => line,
-                Err(ReadlineError::Eof) | Err(ReadlineError::Interrupted) => {
+                if line.trim() == "exit" || line.trim() == "quit" {
                     break;
                 }
-                Err(e) => {
-                    eprintln!("{e}");
-                    break;
-                }
-            };
-            if line.trim() == "exit" || line.trim() == "quit" {
-                break;
-            }
-            let _ = rl.add_history_entry(&line);
-
-            if line.trim() == "schema" {
-                match handler.df_mut().collect_schema() {
-                    Ok(schema) => println!("{schema:?}"),
-                    Err(e) => eprintln!("{e}"),
-                }
-                continue;
-            }
-            if line.trim().starts_with("save") {
-                let path = line
-                    .trim()
-                    .split_once(' ')
-                    .and_then(|(cmd, path)| match cmd {
-                        "save" => Some(path),
-                        _ => None,
-                    });
-                let Some(path) = path else {
-                    eprintln!("save <PATH>");
+                let _ = rl.add_history_entry(&line);
+                if line.trim() == "schema" {
+                    match handler.frame_mut().collect_schema() {
+                        Ok(schema) => println!("{schema:?}"),
+                        Err(e) => eprintln!("{e}"),
+                    }
                     continue;
-                };
-                if let Err(e) = save(&handler, path) {
-                    eprintln!("{e}");
                 }
-                continue;
-            }
-            if let Err(e) = upgrade_df(line, &mut handler) {
-                eprintln!("{e}");
-                continue;
-            };
-            if !self.lazy
-                && let Err(e) = self.display_and_write_repl_output(&handler)
-            {
-                eprintln!("{e}");
-                // Rollback
-                handler.undo().unwrap();
+                if line.trim().starts_with("save") {
+                    let path = line
+                        .trim()
+                        .split_once(' ')
+                        .and_then(|(cmd, path)| match cmd {
+                            "save" => Some(path),
+                            _ => None,
+                        });
+                    let Some(path) = path else {
+                        eprintln!("save <PATH>");
+                        continue;
+                    };
+                    if let Err(e) = save(&handler, path) {
+                        eprintln!("{e}");
+                    }
+                    continue;
+                }
+                if let Err(e) = upgrade_df(line, &mut handler) {
+                    eprintln!("{e}");
+                    continue;
+                }
+                if !self.lazy
+                    && let Err(e) = self.display_and_write_repl_output(&handler)
+                {
+                    eprintln!("{e}");
+                    handler.undo().unwrap();
+                }
             }
         }
         if self.lazy {
@@ -154,7 +147,7 @@ impl Cli {
     }
 
     fn display_and_write_repl_output(&self, handler: &LineExecutor) -> anyhow::Result<()> {
-        let df = handler.df().clone().collect()?;
+        let df = handler.frame().clone().collect()?;
         println!("{df}");
         if let Some(output) = &self.output {
             write_repl_output(df, handler, output.clone())?;
@@ -176,7 +169,7 @@ fn upgrade_df(line: String, handler: &mut LineExecutor) -> anyhow::Result<()> {
 
 fn save(handler: &LineExecutor, path: &str) -> anyhow::Result<()> {
     let path = PathBuf::from(path);
-    let collected = handler.df().clone().collect()?;
+    let collected = handler.frame().clone().collect()?;
     write_repl_output(collected, handler, path)?;
     Ok(())
 }
