@@ -31,7 +31,8 @@ thiserror = "2"
 [features]
 default = []
 polars-backend = ["dep:polars"]
-cli = ["anyhow", "clap", "fancy-regex", "dep:hdv", "polars/json", "rustyline", "polars-backend"]
+file-ops = ["anyhow", "dep:hdv", "polars/json", "polars-backend"]
+cli = ["clap", "fancy-regex", "file-ops", "rustyline"]
 
 [[bin]]
 name = "dfsql"

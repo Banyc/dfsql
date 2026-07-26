@@ -2,7 +2,7 @@ pub mod backend;
 #[cfg(feature = "cli")]
 pub mod cli;
 pub mod dynamic;
-#[cfg(feature = "cli")]
+#[cfg(feature = "file-ops")]
 pub mod file_ops;
 #[cfg(feature = "cli")]
 pub mod handler;
