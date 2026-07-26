@@ -4,12 +4,13 @@ pub mod visual;
 
 use std::{collections::HashMap, path::PathBuf};
 
+use crate::atomic_file::StagedFile;
 use crate::cli::{
     handler::LineExecutor,
-    io::{read_repl_sql_file, read_sql_file, write_repl_sql_output},
+    io::{read_repl_sql_file, read_sql_file, stage_repl_sql_output},
     visual::SqlHelper,
 };
-use crate::file_ops::{read_df_file, write_df_output};
+use crate::file_ops::{read_df_file, stage_df_output, write_df_output};
 use crate::{Executor, MaterializedFrame};
 use anyhow::{anyhow, bail};
 use clap::Parser;
@@ -53,14 +54,13 @@ impl Cli {
             }
             input.insert(name, df);
         }
-        let first_input_name = first_input_name.ok_or_else(|| {
-            anyhow!("Require at least one input data frame from option `--input`")
-        })?;
+        let first_input_name = first_input_name
+            .ok_or_else(|| anyhow!("Require at least one input data frame from option --input"))?;
         let mut executor = Executor::new(first_input_name, input).unwrap();
         if let Some(sql_file) = &self.sql {
             if self.lazy {
                 bail!(
-                    "`lazy` option is unavailable if a `.{SQL_EXTENSION}` is provided via the argument `sql`"
+                    "lazy option is unavailable if a {SQL_EXTENSION} is provided via the argument sql"
                 );
             }
             let s = read_sql_file(sql_file)?;
@@ -78,7 +78,11 @@ impl Cli {
             let lines = if let Some(output) = &self.output {
                 let mut output = output.clone();
                 output.set_extension(SQL_EXTENSION);
-                read_repl_sql_file(&output).ok().unwrap_or_default()
+                if output.try_exists()? {
+                    read_repl_sql_file(&output)?
+                } else {
+                    vec![]
+                }
             } else {
                 vec![]
             };
@@ -89,7 +93,7 @@ impl Cli {
                 if let Err(e) = handler.execute(line) {
                     eprintln!("{e}");
                     break;
-                };
+                }
             }
         }
         rl.set_helper(Some(SqlHelper::new()));
@@ -97,9 +101,7 @@ impl Cli {
             let line = rl.readline("> ");
             let line = match line {
                 Ok(line) => line,
-                Err(ReadlineError::Eof) | Err(ReadlineError::Interrupted) => {
-                    break;
-                }
+                Err(ReadlineError::Eof) | Err(ReadlineError::Interrupted) => break,
                 Err(e) => {
                     eprintln!("{e}");
                     break;
@@ -136,7 +138,7 @@ impl Cli {
             if let Err(e) = upgrade_df(line, &mut handler) {
                 eprintln!("{e}");
                 continue;
-            };
+            }
             if !self.lazy
                 && let Err(e) = self.display_and_write_repl_output(&handler)
             {
@@ -183,10 +185,8 @@ fn write_repl_output(
     handler: &LineExecutor,
     mut path: PathBuf,
 ) -> anyhow::Result<()> {
-    write_df_output(df, &path)?;
-
+    let df_output = stage_df_output(df, &path)?;
     path.set_extension(SQL_EXTENSION);
-    write_repl_sql_output(handler.history().iter(), path)?;
-
-    Ok(())
+    let sql_output = stage_repl_sql_output(handler.history().iter(), path)?;
+    StagedFile::commit_pair(df_output, sql_output)
 }

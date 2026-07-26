@@ -1,4 +1,7 @@
-use crate::{Frame, MaterializedFrame};
+use crate::{
+    Frame, MaterializedFrame,
+    atomic_file::{StagedFile, stage_file},
+};
 use anyhow::{Context, anyhow, bail, ensure};
 use hdv::format::{AtomScheme, AtomType, AtomValue, ValueRow};
 use hdv::io::{
@@ -7,9 +10,11 @@ use hdv::io::{
 };
 use polars::prelude::*;
 use std::{
+    cell::Cell,
     fs::File,
     io::{self, BufRead, BufReader, BufWriter, Read},
     path::Path,
+    rc::Rc,
 };
 
 #[derive(Clone, Copy)]
@@ -72,49 +77,49 @@ pub fn read_df_file(path: impl AsRef<Path>) -> anyhow::Result<Frame> {
     }
 }
 
-pub fn write_df_output(mut frame: MaterializedFrame, path: impl AsRef<Path>) -> anyhow::Result<()> {
+pub fn write_df_output(frame: MaterializedFrame, path: impl AsRef<Path>) -> anyhow::Result<()> {
+    stage_df_output(frame, path)?.commit()
+}
+
+pub(crate) fn stage_df_output(
+    mut frame: MaterializedFrame,
+    path: impl AsRef<Path>,
+) -> anyhow::Result<StagedFile> {
     let path = path.as_ref();
-    match FileFormat::from_path(path)? {
-        FileFormat::Csv => {
-            CsvWriter::new(create_output(path)?).finish(frame.inner_mut())?;
+    let format = FileFormat::from_path(path)?;
+    stage_file(path, |output| {
+        match format {
+            FileFormat::Csv => {
+                CsvWriter::new(output).finish(frame.inner_mut())?;
+            }
+            FileFormat::Json => {
+                JsonWriter::new(output)
+                    .with_json_format(JsonFormat::Json)
+                    .finish(frame.inner_mut())?;
+            }
+            FileFormat::JsonLines => {
+                JsonWriter::new(output)
+                    .with_json_format(JsonFormat::JsonLines)
+                    .finish(frame.inner_mut())?;
+            }
+            FileFormat::HdvBinary => write_hdv_binary(&frame, output)?,
+            FileFormat::HdvText => write_hdv_text(&frame, output)?,
         }
-        FileFormat::Json => {
-            JsonWriter::new(create_output(path)?)
-                .with_json_format(JsonFormat::Json)
-                .finish(frame.inner_mut())?;
-        }
-        FileFormat::JsonLines => {
-            JsonWriter::new(create_output(path)?)
-                .with_json_format(JsonFormat::JsonLines)
-                .finish(frame.inner_mut())?;
-        }
-        FileFormat::HdvBinary => write_hdv_binary(&frame, path)?,
-        FileFormat::HdvText => write_hdv_text(&frame, path)?,
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 fn open_input(path: &Path) -> anyhow::Result<File> {
     File::open(path).with_context(|| format!("failed to open '{}'", path.display()))
 }
 
-fn create_output(path: &Path) -> anyhow::Result<BufWriter<File>> {
-    let file = File::options()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)
-        .with_context(|| format!("failed to create '{}'", path.display()))?;
-    Ok(BufWriter::new(file))
-}
-
-fn write_hdv_binary(frame: &MaterializedFrame, path: &Path) -> anyhow::Result<()> {
+fn write_hdv_binary(frame: &MaterializedFrame, output: &mut BufWriter<File>) -> anyhow::Result<()> {
     let (header, rows) = frame_to_hdv(frame)?;
     ensure!(
         !rows.is_empty(),
         "HDV cannot encode a data frame without rows"
     );
-    let mut writer = HdvBinRawWriter::new(create_output(path)?, header);
+    let mut writer = HdvBinRawWriter::new(output, header);
     for row in &rows {
         writer.write(row)?;
     }
@@ -122,7 +127,7 @@ fn write_hdv_binary(frame: &MaterializedFrame, path: &Path) -> anyhow::Result<()
     Ok(())
 }
 
-fn write_hdv_text(frame: &MaterializedFrame, path: &Path) -> anyhow::Result<()> {
+fn write_hdv_text(frame: &MaterializedFrame, output: &mut BufWriter<File>) -> anyhow::Result<()> {
     let (header, rows) = frame_to_hdv(frame)?;
     ensure!(
         !rows.is_empty(),
@@ -132,7 +137,7 @@ fn write_hdv_text(frame: &MaterializedFrame, path: &Path) -> anyhow::Result<()> 
     let options = HdvTextWriterOptions {
         is_csv_header: false,
     };
-    let mut writer = HdvTextRawWriter::new(create_output(path)?, header, options);
+    let mut writer = HdvTextRawWriter::new(output, header, options);
     for row in &rows {
         writer.write(row)?;
     }
@@ -141,19 +146,47 @@ fn write_hdv_text(frame: &MaterializedFrame, path: &Path) -> anyhow::Result<()> 
 }
 
 fn read_hdv_binary(input: File) -> anyhow::Result<DataFrame> {
-    let mut reader = HdvBinRawReader::new(BufReader::new(input));
+    let bytes_read = Rc::new(Cell::new(0));
+    let input = CountingReader {
+        inner: BufReader::new(input),
+        bytes_read: bytes_read.clone(),
+    };
+    let mut reader = HdvBinRawReader::new(input);
     let mut rows = Vec::new();
     loop {
+        let before = bytes_read.get();
         match reader.read() {
             Ok(row) => rows.push(row),
-            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::UnexpectedEof
+                    && reader.header().is_some()
+                    && bytes_read.get() == before =>
+            {
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
+                return Err(error).context("truncated HDV binary input");
+            }
             Err(error) => return Err(error.into()),
         }
     }
-    let Some(header) = reader.header() else {
-        return Ok(DataFrame::empty());
-    };
+    let header = reader
+        .header()
+        .ok_or_else(|| anyhow!("HDV binary input has no header"))?;
     frame_from_hdv(header, &rows)
+}
+
+struct CountingReader<R> {
+    inner: R,
+    bytes_read: Rc<Cell<usize>>,
+}
+
+impl<R: Read> Read for CountingReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let bytes = self.inner.read(buffer)?;
+        self.bytes_read.set(self.bytes_read.get() + bytes);
+        Ok(bytes)
+    }
 }
 
 fn read_hdv_text(input: File) -> anyhow::Result<DataFrame> {
@@ -454,6 +487,20 @@ mod tests {
     }
 
     #[test]
+    fn hdv_binary_rejects_empty_and_truncated_inputs() {
+        let empty = TestPath::new("hdvb");
+        std::fs::write(empty.as_path(), []).unwrap();
+        assert!(read_df_file(empty.as_path()).is_err());
+        let truncated = TestPath::new("hdvb");
+        let frame = MaterializedFrame::from_inner(polars::df!("id" => [1_i64, 2]).unwrap());
+        write_df_output(frame, truncated.as_path()).unwrap();
+        let mut bytes = std::fs::read(truncated.as_path()).unwrap();
+        bytes.pop();
+        std::fs::write(truncated.as_path(), bytes).unwrap();
+        assert!(read_df_file(truncated.as_path()).is_err());
+    }
+
+    #[test]
     fn hdv_text_round_trip_preserves_supported_text_types() {
         let frame = MaterializedFrame::from_inner(
             DataFrame::new(
@@ -481,6 +528,24 @@ mod tests {
         let path = TestPath::new("unknown");
         std::fs::write(path.as_path(), "keep").unwrap();
         let frame = MaterializedFrame::from_inner(polars::df!("id" => [1_i64]).unwrap());
+        assert!(write_df_output(frame, path.as_path()).is_err());
+        assert_eq!(std::fs::read_to_string(path.as_path()).unwrap(), "keep");
+    }
+
+    #[test]
+    fn failed_serialization_does_not_replace_existing_file() {
+        let path = TestPath::new("hdvb");
+        std::fs::write(path.as_path(), "keep").unwrap();
+        let frame = MaterializedFrame::from_inner(
+            DataFrame::new(
+                1,
+                vec![Column::new(
+                    "unsupported".into(),
+                    vec![Series::new("item".into(), vec![1_i64])],
+                )],
+            )
+            .unwrap(),
+        );
         assert!(write_df_output(frame, path.as_path()).is_err());
         assert_eq!(std::fs::read_to_string(path.as_path()).unwrap(), "keep");
     }

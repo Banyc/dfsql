@@ -1,3 +1,5 @@
+#[cfg(feature = "file-ops")]
+mod atomic_file;
 pub mod backend;
 #[cfg(feature = "cli")]
 pub mod cli;

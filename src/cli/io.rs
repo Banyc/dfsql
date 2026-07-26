@@ -3,22 +3,29 @@ use std::{
     path::Path,
 };
 
-use crate::sql;
+use crate::{
+    atomic_file::{StagedFile, stage_file},
+    sql,
+};
 
 pub fn write_repl_sql_output<'a>(
     sql: impl Iterator<Item = &'a String>,
     path: impl AsRef<Path>,
 ) -> anyhow::Result<()> {
-    let mut output = std::fs::File::options()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)?;
-    for s in sql {
-        output.write_all(s.as_bytes())?;
-        output.write_all("\n".as_bytes())?;
-    }
-    Ok(())
+    stage_repl_sql_output(sql, path)?.commit()
+}
+
+pub(crate) fn stage_repl_sql_output<'a>(
+    sql: impl Iterator<Item = &'a String>,
+    path: impl AsRef<Path>,
+) -> anyhow::Result<StagedFile> {
+    stage_file(path, |output| {
+        for s in sql {
+            output.write_all(s.as_bytes())?;
+            output.write_all(b"\n")?;
+        }
+        Ok(())
+    })
 }
 
 pub fn read_repl_sql_file(path: impl AsRef<Path>) -> anyhow::Result<Vec<String>> {
