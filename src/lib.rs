@@ -1,13 +1,13 @@
 pub mod backend;
 #[cfg(feature = "cli")]
 pub mod cli;
-#[cfg(feature = "polars-backend")]
-pub mod df;
 pub mod dynamic;
 #[cfg(feature = "cli")]
 pub mod handler;
 #[cfg(feature = "cli")]
 pub mod io;
+#[cfg(feature = "polars-backend")]
+pub mod polars_backend;
 pub mod sql;
 #[cfg(feature = "cli")]
 pub mod visual;
