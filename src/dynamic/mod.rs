@@ -6,6 +6,7 @@ mod value;
 pub use executor::Executor;
 pub use frame::{Column, ColumnData, Frame};
 pub use value::{IntoValue, Value, ValueType};
+pub type MaterializedFrame = Frame;
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum Error {

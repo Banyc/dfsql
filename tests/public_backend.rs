@@ -26,6 +26,14 @@ fn dynamic_columns_use_typed_data() {
         ColumnData::Mixed(..)
     ));
 }
+#[test]
+fn dynamic_executor_collects_the_current_frame() {
+    use dfsql::dynamic::{Column, Executor, Frame, MaterializedFrame};
+    let input = Frame::new(vec![Column::new("id", [1_i64, 2])]).unwrap();
+    let executor = Executor::from_frame("table", input.clone());
+    let output: MaterializedFrame = executor.collect().unwrap();
+    assert_eq!(output, input);
+}
 #[cfg(not(feature = "polars-backend"))]
 #[test]
 fn root_facade_uses_dynamic_backend_without_polars() {

@@ -74,6 +74,10 @@ impl Executor {
         self.input.insert(self.frame_name.clone(), frame);
     }
 
+    pub fn collect(&self) -> Result<Frame> {
+        Ok(self.frame().clone())
+    }
+
     pub fn execute(&mut self, statements: &crate::sql::S) -> Result<()> {
         for statement in &statements.statements {
             self.execute_statement(statement)?;
