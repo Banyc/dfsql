@@ -13,9 +13,9 @@ fn parser_regressions() {
     assert!(matches!(parsed.statements.as_slice(), [Stat::Select(SelectStat { columns })] if matches!(columns.as_slice(), [Expr::Sort(_)])));
 
     assert!(matches!(parse("select (a b)"), Err(ParseError::Parser(message)) if message.contains("column 11")));
-    assert!(matches!(parse("SELECT foo LIMIT"), Err(ParseError::Parser(message)) if message.contains("column 12")));
-    assert!(matches!(parse(r#"select "a\n" Limit"#), Err(ParseError::Parser(message)) if message.contains("column 14")));
-    assert!(matches!(parse("select (a) limit"), Err(ParseError::Parser(message)) if message.contains("column 12")));
+    assert!(matches!(parse("SELECT foo LIMIT"), Err(ParseError::Parser(message)) if message.contains("column 17")));
+    assert!(matches!(parse(r#"select "aln" LIMIT"#), Err(ParseError::Parser(message)) if message.contains("column 19")));
+    assert!(matches!(parse("select (a) LIMIT"), Err(ParseError::Parser(message)) if message.contains("column 17")));
 }
 
 #[test]
@@ -60,4 +60,11 @@ fn parser_accepts_extract_all_after_lexer_classifies_all_as_expression_keyword()
             )
         )
     ));
+}
+
+#[test]
+fn top_level_parser_errors_point_to_the_furthest_token() {
+    assert!(
+        matches!(parse("select value +"), Err(ParseError::Parser(message)) if message.contains("line 1, column 15") && message.contains("unexpected end of input"))
+    );
 }

@@ -25,54 +25,43 @@ pub(crate) fn parse_detailed(tokens: &[Token]) -> Result<S, TokenParseError> {
         let token_idx = tokens.len() - input.len();
         match stat(&mut input) {
             Ok(s) => statements.push(s),
-            Err(detail) => {
-                return Err(TokenParseError::new(token_idx, detail));
+            Err(mut error) => {
+                error.offset += token_idx;
+                return Err(error);
             }
         }
     }
     Ok(S { statements })
 }
 
-fn stat(input: &mut Tokens<'_>) -> Result<Stat, String> {
-    let saved = *input;
-    // Try clone first (since clone is its own keyword now)
-    if let Ok(s) = clone_stat(input) {
-        return Ok(Stat::Clone(s));
+fn stat(input: &mut Tokens<'_>) -> Result<Stat, TokenParseError> {
+    let start = *input;
+    let mut best = TokenParseError::new(0, format!("unexpected token {:?}", input.first()));
+    macro_rules! attempt {
+        ($parser:ident, $map:expr) => {{
+            *input = start;
+            match $parser(input) {
+                Ok(value) => return Ok(($map)(value)),
+                Err(detail) => {
+                    let offset = start.len() - input.len();
+                    if offset > best.offset {
+                        best = TokenParseError::new(offset, detail);
+                    }
+                }
+            }
+        }};
     }
-    *input = saved;
-    if let Ok(s) = select_stat(input) {
-        return Ok(Stat::Select(s));
-    }
-    *input = saved;
-    if let Ok(s) = group_agg_stat(input) {
-        return Ok(Stat::GroupAgg(s));
-    }
-    *input = saved;
-    if let Ok(s) = filter_stat(input) {
-        return Ok(Stat::Filter(s));
-    }
-    *input = saved;
-    if let Ok(s) = limit_stat(input) {
-        return Ok(Stat::Limit(s));
-    }
-    *input = saved;
-    if let Ok(s) = reverse_stat(input) {
-        return Ok(s);
-    }
-    *input = saved;
-    if let Ok(s) = sort_stat(input) {
-        return Ok(Stat::Sort(s));
-    }
-    *input = saved;
-    if let Ok(s) = join_stat(input) {
-        return Ok(Stat::Join(s));
-    }
-    *input = saved;
-    if let Ok(s) = use_stat(input) {
-        return Ok(Stat::Use(s));
-    }
-    *input = saved;
-    Err(format!("unexpected token {:?}", input.first()))
+    attempt!(clone_stat, Stat::Clone);
+    attempt!(select_stat, Stat::Select);
+    attempt!(group_agg_stat, Stat::GroupAgg);
+    attempt!(filter_stat, Stat::Filter);
+    attempt!(limit_stat, Stat::Limit);
+    attempt!(reverse_stat, |stat| stat);
+    attempt!(sort_stat, Stat::Sort);
+    attempt!(join_stat, Stat::Join);
+    attempt!(use_stat, Stat::Use);
+    *input = start;
+    Err(best)
 }
 
 fn expect_token(input: &mut Tokens<'_>, expected: &Token) -> Result<(), String> {
