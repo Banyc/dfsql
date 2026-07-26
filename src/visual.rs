@@ -118,10 +118,8 @@ impl TerminalKeywordHighlighter {
     pub fn new(keyword_color_pairs: impl Iterator<Item = KeywordColor>) -> Self {
         let rules = keyword_color_pairs
             .map(|pair| {
-                let pattern = format!(
-                    "(?<=\\s|^|\\()({keyword})(?=\\s|$|\\))",
-                    keyword = pair.keyword
-                );
+                let keyword = regex::escape(&pair.keyword);
+                let pattern = format!(r"(?<=\s|^|\(|\))({})(?=\s|$|\(|\)|\+|/)", keyword);
                 let regex = Regex::new(&pattern).unwrap();
                 (pair, regex)
             })
@@ -164,5 +162,17 @@ impl TerminalColor {
             TerminalColor::Blue => 34,
             TerminalColor::Magenta => 35,
         }
+    }
+}
+
+#[rustfmt::skip]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn highlighter_treats_public_keywords_as_literals() {
+        let highlighter = TerminalKeywordHighlighter::new([KeywordColor { keyword: "a+b".into(), color: TerminalColor::Yellow }].into_iter());
+        assert_eq!(highlighter.replace("a+b ab"), "\x1b[1;33ma+b\x1b[0m ab");
     }
 }

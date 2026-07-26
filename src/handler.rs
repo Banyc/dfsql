@@ -42,7 +42,13 @@ impl LineExecutor {
 
     pub fn execute(&mut self, line: String) -> anyhow::Result<()> {
         let s = sql::parse(&line)?;
-        self.executor.execute(&s)?;
+        let df_name = self.executor.df_name().clone();
+        let input = self.executor.input().clone();
+        if let Err(error) = self.executor.execute(&s) {
+            self.executor = DfExecutor::new(df_name, input)
+                .expect("the active data frame existed before line execution");
+            return Err(error.into());
+        }
         if !line.trim().is_empty() {
             self.history.push(line);
         }
@@ -69,4 +75,24 @@ fn apply_history(
         executor.execute(&s)?;
     }
     Ok(())
+}
+
+#[rustfmt::skip]
+#[cfg(test)]
+mod tests {
+    use polars::prelude::IntoLazy;
+    use super::*;
+
+    #[test]
+    fn failed_line_restores_all_executor_state() {
+        let first = polars::df!("id" => [1_i64]).unwrap().lazy();
+        let other = polars::df!("id" => [2_i64]).unwrap().lazy();
+        let executor = DfExecutor::new("first".to_string(), HashMap::from([("first".to_string(), first), ("other".to_string(), other)])).unwrap();
+        let mut handler = LineExecutor::new(executor);
+        let error = handler.execute("use other clone leaked use missing".into()).unwrap_err();
+        assert!(error.to_string().contains("missing"));
+        assert_eq!(handler.executor.df_name(), "first");
+        assert!(!handler.executor.input().contains_key("leaked"));
+        assert!(handler.history().is_empty());
+    }
 }

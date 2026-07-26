@@ -125,8 +125,6 @@ fn apply_stat(
                     .get(&join.other)
                     .ok_or_else(|| ApplyStatError::DfNotExists(join.other.to_string()))?
                     .clone();
-                // let left_on: Vec<_> = join.left_on.iter().map(convert_expr).collect();
-                // let right_on: Vec<_> = join.right_on.iter().map(convert_expr).collect();
                 let left_on = convert_expr(&join.left_on);
                 let right_on = match &join.right_on {
                     Some(right_on) => convert_expr(right_on),
@@ -134,7 +132,7 @@ fn apply_stat(
                 };
                 match join.ty {
                     sql::stat::SingleColJoinType::Left => df.left_join(other, left_on, right_on),
-                    sql::stat::SingleColJoinType::Right => other.left_join(df, left_on, right_on),
+                    sql::stat::SingleColJoinType::Right => other.left_join(df, right_on, left_on),
                     sql::stat::SingleColJoinType::Inner => df.inner_join(other, left_on, right_on),
                     sql::stat::SingleColJoinType::Full => df.full_join(other, left_on, right_on),
                 }
@@ -308,6 +306,7 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
     }
 }
 
+#[rustfmt::skip]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,5 +324,16 @@ mod tests {
         .unwrap();
         executor.execute(&s).unwrap();
         executor.df().clone().collect().unwrap();
+    }
+
+    #[test]
+    fn right_join_uses_each_side_key_after_swapping_inputs() {
+        let left = df!("left_id" => [1, 2], "left_value" => ["one", "two"]).unwrap().lazy();
+        let right = df!("right_id" => [2, 3], "right_value" => ["two", "three"]).unwrap().lazy();
+        let mut executor = DfExecutor::new("left".to_string(), HashMap::from_iter([("left".to_string(), left), ("other".to_string(), right)])).unwrap();
+        executor.execute(&sql::parse("right join other on left_id right_id").unwrap()).unwrap();
+        let joined = executor.df().clone().collect().unwrap();
+        assert_eq!(joined.height(), 2);
+        assert_eq!(joined.column("right_id").unwrap().i32().unwrap().into_no_null_iter().collect::<Vec<_>>(), [2, 3]);
     }
 }
