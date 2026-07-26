@@ -64,19 +64,18 @@ pub(crate) fn stage_file(
 }
 
 fn commit_pair(mut files: Vec<StagedFile>) -> anyhow::Result<()> {
-    let unique_targets: HashSet<_> = files.iter().map(|f| f.target.clone()).collect();
+    let unique_targets = files
+        .iter()
+        .map(|file| file.target.clone())
+        .collect::<HashSet<_>>();
     if unique_targets.len() != files.len() {
         bail!("cannot atomically commit the same output path more than once");
     }
     let mut backups = Vec::with_capacity(files.len());
     for file in &files {
-        match backup_existing(&file.target) {
-            Ok(backup) => backups.push(backup),
-            Err(error) => {
-                restore_targets(&files, &backups);
-                return Err(error);
-            }
-        }
+        let backup = backup_existing(&file.target)
+            .map_err(|error| with_rollback(error, &files, &backups, 0))?;
+        backups.push(backup);
     }
     for index in 0..files.len() {
         let temporary = files[index]
@@ -85,18 +84,15 @@ fn commit_pair(mut files: Vec<StagedFile>) -> anyhow::Result<()> {
             .expect("a staged file has a temporary path");
         if let Err(error) = fs::rename(&temporary, &files[index].target) {
             files[index].temporary = Some(temporary);
-            restore_targets(&files, &backups);
-            return Err(error).with_context(|| {
-                format!(
-                    "failed to replace output '{}'",
-                    files[index].target.display()
-                )
-            });
+            let error = anyhow::Error::new(error).context(format!(
+                "failed to replace output '{}'",
+                files[index].target.display()
+            ));
+            return Err(with_rollback(error, &files, &backups, index));
         }
     }
     for backup in backups.into_iter().flatten() {
-        fs::remove_file(&backup)
-            .with_context(|| format!("failed to remove backup '{}'", backup.display()))?;
+        let _ = fs::remove_file(backup);
     }
     Ok(())
 }
@@ -114,14 +110,48 @@ fn backup_existing(target: &Path) -> anyhow::Result<Option<PathBuf>> {
     Ok(Some(backup))
 }
 
-fn restore_targets(files: &[StagedFile], backups: &[Option<PathBuf>]) {
-    for (file, backup) in files.iter().zip(backups) {
-        if file.target.exists() {
-            let _ = fs::remove_file(&file.target);
+fn with_rollback(
+    error: anyhow::Error,
+    files: &[StagedFile],
+    backups: &[Option<PathBuf>],
+    installed: usize,
+) -> anyhow::Error {
+    match restore_targets(files, backups, installed) {
+        Ok(()) => error,
+        Err(rollback_error) => anyhow!("{error:#}; rollback failed: {rollback_error:#}"),
+    }
+}
+
+fn restore_targets(
+    files: &[StagedFile],
+    backups: &[Option<PathBuf>],
+    installed: usize,
+) -> anyhow::Result<()> {
+    let mut failures = Vec::new();
+    for (index, (file, backup)) in files.iter().zip(backups).enumerate() {
+        if index < installed
+            && let Err(error) = fs::remove_file(&file.target)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            failures.push(format!(
+                "failed to remove replacement '{}': {error}",
+                file.target.display()
+            ));
         }
-        if let Some(backup) = backup {
-            let _ = fs::rename(backup, &file.target);
+        if let Some(backup) = backup
+            && let Err(error) = fs::rename(backup, &file.target)
+        {
+            failures.push(format!(
+                "failed to restore backup '{}' to '{}': {error}",
+                backup.display(),
+                file.target.display()
+            ));
         }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        bail!("{}", failures.join("; "))
     }
 }
 
@@ -219,5 +249,26 @@ mod tests {
         assert_eq!(fs::read_to_string(&second_path).unwrap(), "new second");
         fs::remove_file(first_path).unwrap();
         fs::remove_file(second_path).unwrap();
+    }
+
+    #[test]
+    fn rollback_failures_are_reported() {
+        let target = path("rollback-target");
+        let missing_backup = path("missing-backup");
+        let file = StagedFile {
+            target: target.clone(),
+            temporary: None,
+        };
+        let error = with_rollback(
+            anyhow!("installation failed"),
+            &[file],
+            &[Some(missing_backup.clone())],
+            0,
+        );
+        let message = error.to_string();
+        assert!(message.contains("installation failed"));
+        assert!(message.contains("rollback failed"));
+        assert!(message.contains(&missing_backup.display().to_string()));
+        assert!(message.contains(&target.display().to_string()));
     }
 }
