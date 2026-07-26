@@ -2,6 +2,12 @@ use std::collections::HashMap;
 
 use crate::{Error, Executor, Frame, sql};
 
+pub(crate) struct Checkpoint {
+    history: Vec<String>,
+    frame_name: String,
+    input: HashMap<String, Frame>,
+}
+
 pub struct LineExecutor {
     history: Vec<String>,
     original_frame_name: String,
@@ -67,6 +73,20 @@ impl LineExecutor {
 
     pub fn history(&self) -> &Vec<String> {
         &self.history
+    }
+
+    pub(crate) fn checkpoint(&self) -> Checkpoint {
+        Checkpoint {
+            history: self.history.clone(),
+            frame_name: self.executor.frame_name().to_owned(),
+            input: self.executor.input().clone(),
+        }
+    }
+
+    pub(crate) fn restore(&mut self, checkpoint: Checkpoint) {
+        self.history = checkpoint.history;
+        self.executor = Executor::new(checkpoint.frame_name, checkpoint.input)
+            .expect("the checkpoint contains its active data frame");
     }
 }
 

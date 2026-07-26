@@ -180,6 +180,19 @@ fn upgrade_df(line: String, handler: &mut LineExecutor) -> anyhow::Result<()> {
     handler.execute(line)
 }
 
+fn upgrade_df_and_persist(
+    line: String,
+    handler: &mut LineExecutor,
+    persist: impl FnOnce(&LineExecutor) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let checkpoint = handler.checkpoint();
+    let result = upgrade_df(line, handler).and_then(|()| persist(handler));
+    if result.is_err() {
+        handler.restore(checkpoint);
+    }
+    result
+}
+
 fn save(handler: &LineExecutor, path: &str) -> anyhow::Result<()> {
     let path = PathBuf::from(path);
     let collected = handler.frame().clone().collect()?;
@@ -233,5 +246,24 @@ mod tests {
         );
         std::fs::remove_file(output).unwrap();
         std::fs::remove_file(history).unwrap();
+    }
+
+    #[test]
+    fn persistence_failure_restores_undo_and_reset() {
+        for command in ["undo", "reset"] {
+            let mut handler = handler();
+            handler.execute("sort id".to_owned()).unwrap();
+            handler.execute("limit 1".to_owned()).unwrap();
+            let expected_history = handler.history().clone();
+            let expected = handler.frame().clone().collect().unwrap();
+            let error = upgrade_df_and_persist(command.to_owned(), &mut handler, |_| {
+                bail!("persistence failed")
+            })
+            .unwrap_err();
+            assert_eq!(error.to_string(), "persistence failed");
+            assert_eq!(handler.history(), &expected_history);
+            let actual = handler.frame().clone().collect().unwrap();
+            assert!(actual.inner().equals_missing(expected.inner()));
+        }
     }
 }
