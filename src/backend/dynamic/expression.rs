@@ -429,19 +429,21 @@ fn numeric_value(operator: BinaryOperator, left: &Value, right: &Value) -> Resul
         }));
     }
     if matches!(left, Number::Int(_)) || matches!(right, Number::Int(_)) {
-        return signed_value(operator, as_i64(left), as_i64(right));
+        return signed_value(operator, as_i64(left)?, as_i64(right)?);
     }
     unsigned_value(operator, as_u64(left), as_u64(right))
 }
 
 fn signed_value(operator: BinaryOperator, left: i64, right: i64) -> Result<Value> {
     let value = match operator {
-        BinaryOperator::Add => left.wrapping_add(right),
-        BinaryOperator::Sub => left.wrapping_sub(right),
-        BinaryOperator::Mul => left.wrapping_mul(right),
-        BinaryOperator::Div => left.wrapping_div(right),
-        BinaryOperator::Modulo => left.wrapping_rem(right),
-        BinaryOperator::Pow if right >= 0 => left.wrapping_pow(right as u32),
+        BinaryOperator::Add => left.checked_add(right),
+        BinaryOperator::Sub => left.checked_sub(right),
+        BinaryOperator::Mul => left.checked_mul(right),
+        BinaryOperator::Div => left.checked_div(right),
+        BinaryOperator::Modulo => left.checked_rem(right),
+        BinaryOperator::Pow if right >= 0 => u32::try_from(right)
+            .ok()
+            .and_then(|right| left.checked_pow(right)),
         BinaryOperator::Pow => {
             return Err(Error::InvalidValue {
                 operation: "power",
@@ -449,26 +451,34 @@ fn signed_value(operator: BinaryOperator, left: i64, right: i64) -> Result<Value
             });
         }
         _ => unreachable!(),
-    };
+    }
+    .ok_or_else(|| arithmetic_overflow(operator, left, right))?;
     Ok(Value::Int(value))
 }
 
 fn unsigned_value(operator: BinaryOperator, left: u64, right: u64) -> Result<Value> {
-    Ok(Value::UInt(match operator {
-        BinaryOperator::Add => left.wrapping_add(right),
-        BinaryOperator::Sub => left.wrapping_sub(right),
-        BinaryOperator::Mul => left.wrapping_mul(right),
-        BinaryOperator::Div => left / right,
-        BinaryOperator::Modulo => left % right,
-        BinaryOperator::Pow => left.wrapping_pow(right as u32),
+    let value = match operator {
+        BinaryOperator::Add => left.checked_add(right),
+        BinaryOperator::Sub => left.checked_sub(right),
+        BinaryOperator::Mul => left.checked_mul(right),
+        BinaryOperator::Div => left.checked_div(right),
+        BinaryOperator::Modulo => left.checked_rem(right),
+        BinaryOperator::Pow => u32::try_from(right)
+            .ok()
+            .and_then(|right| left.checked_pow(right)),
         _ => unreachable!(),
-    }))
+    }
+    .ok_or_else(|| arithmetic_overflow(operator, left, right))?;
+    Ok(Value::UInt(value))
 }
 
-fn as_i64(value: Number) -> i64 {
+fn as_i64(value: Number) -> Result<i64> {
     match value {
-        Number::UInt(value) => value as i64,
-        Number::Int(value) => value,
+        Number::UInt(value) => i64::try_from(value).map_err(|_| Error::InvalidValue {
+            operation: "arithmetic",
+            value: format!("{value} cannot be represented as a signed integer"),
+        }),
+        Number::Int(value) => Ok(value),
         Number::Float(_) => unreachable!(),
     }
 }
@@ -477,6 +487,17 @@ fn as_u64(value: Number) -> u64 {
     match value {
         Number::UInt(value) => value,
         Number::Int(_) | Number::Float(_) => unreachable!(),
+    }
+}
+
+fn arithmetic_overflow(
+    operator: BinaryOperator,
+    left: impl std::fmt::Display,
+    right: impl std::fmt::Display,
+) -> Error {
+    Error::InvalidValue {
+        operation: "arithmetic",
+        value: format!("{left} {operator:?} {right} overflows"),
     }
 }
 
@@ -576,7 +597,12 @@ fn map_all(column: Column, mut function: impl FnMut(&Value) -> Result<Value>) ->
 fn absolute(value: &Value) -> Result<Value> {
     Ok(match value {
         Value::UInt(value) => Value::UInt(*value),
-        Value::Int(value) => Value::Int(value.wrapping_abs()),
+        Value::Int(value) => {
+            Value::Int(value.checked_abs().ok_or_else(|| Error::InvalidValue {
+                operation: "abs",
+                value: format!("{value} overflows"),
+            })?)
+        }
         Value::Float(value) => Value::Float(value.abs()),
         value => return Err(value.invalid_type("abs")),
     })
@@ -584,8 +610,21 @@ fn absolute(value: &Value) -> Result<Value> {
 
 fn negate(value: &Value) -> Result<Value> {
     Ok(match value {
-        Value::UInt(value) => Value::Int(-(*value as i64)),
-        Value::Int(value) => Value::Int(value.wrapping_neg()),
+        Value::UInt(value) => Value::Int(
+            i64::try_from(*value)
+                .ok()
+                .and_then(i64::checked_neg)
+                .ok_or_else(|| Error::InvalidValue {
+                    operation: "negate",
+                    value: format!("{value} cannot be represented as a negative integer"),
+                })?,
+        ),
+        Value::Int(value) => {
+            Value::Int(value.checked_neg().ok_or_else(|| Error::InvalidValue {
+                operation: "negate",
+                value: format!("{value} overflows"),
+            })?)
+        }
         Value::Float(value) => Value::Float(-value),
         value => return Err(value.invalid_type("negate")),
     })
@@ -786,11 +825,37 @@ fn cast_value(value: &Value, ty: Type) -> Result<Value> {
         value => return Err(value.invalid_type("cast")),
     };
     Ok(match ty {
-        Type::UInt => Value::UInt(number.as_f64() as u64),
-        Type::Int => Value::Int(number.as_f64() as i64),
+        Type::UInt => Value::UInt(number_to_u64(number)?),
+        Type::Int => Value::Int(number_to_i64(number)?),
         Type::Float => Value::Float(number.as_f64()),
         Type::Str => unreachable!(),
     })
+}
+
+fn number_to_u64(number: Number) -> Result<u64> {
+    const U64_EXCLUSIVE_MAX: f64 = 18_446_744_073_709_551_616.0;
+    match number {
+        Number::UInt(value) => Ok(value),
+        Number::Int(value) => u64::try_from(value).map_err(|_| invalid_value("cast", value)),
+        Number::Float(value) if value.is_finite() && (0.0..U64_EXCLUSIVE_MAX).contains(&value) => {
+            Ok(value as u64)
+        }
+        Number::Float(value) => Err(invalid_value("cast", value)),
+    }
+}
+
+fn number_to_i64(number: Number) -> Result<i64> {
+    const I64_EXCLUSIVE_MAX: f64 = 9_223_372_036_854_775_808.0;
+    match number {
+        Number::UInt(value) => i64::try_from(value).map_err(|_| invalid_value("cast", value)),
+        Number::Int(value) => Ok(value),
+        Number::Float(value)
+            if value.is_finite() && value >= i64::MIN as f64 && value < I64_EXCLUSIVE_MAX =>
+        {
+            Ok(value as i64)
+        }
+        Number::Float(value) => Err(invalid_value("cast", value)),
+    }
 }
 
 pub(crate) fn select(frame: &Frame, expressions: &[Expr]) -> Result<Frame> {

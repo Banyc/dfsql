@@ -15,6 +15,7 @@ pub enum Value {
     Int(i64),
     Float(f64),
     String(Arc<str>),
+    Bytes(Arc<[u8]>),
     List(Arc<[Value]>),
 }
 
@@ -25,6 +26,7 @@ pub enum ValueType {
     Int,
     Float,
     String,
+    Bytes,
     List,
 }
 
@@ -36,6 +38,7 @@ impl ValueType {
             Self::Int => "int",
             Self::Float => "float",
             Self::String => "string",
+            Self::Bytes => "bytes",
             Self::List => "list",
         }
     }
@@ -130,6 +133,18 @@ impl From<&str> for Value {
 impl From<Arc<str>> for Value {
     fn from(v: Arc<str>) -> Self {
         Value::String(v)
+    }
+}
+
+impl From<Vec<u8>> for Value {
+    fn from(v: Vec<u8>) -> Self {
+        Value::Bytes(v.into())
+    }
+}
+
+impl From<Arc<[u8]>> for Value {
+    fn from(v: Arc<[u8]>) -> Self {
+        Value::Bytes(v)
     }
 }
 
@@ -228,6 +243,18 @@ impl IntoValue for Arc<str> {
     }
 }
 
+impl IntoValue for Vec<u8> {
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::Bytes)
+    }
+}
+
+impl IntoValue for Arc<[u8]> {
+    fn value_type() -> Option<ValueType> {
+        Some(ValueType::Bytes)
+    }
+}
+
 impl IntoValue for Value {
     fn value_type() -> Option<ValueType> {
         None
@@ -267,9 +294,89 @@ impl Number {
             Self::Float(value) => value,
         }
     }
+
+    pub(crate) fn compare(self, other: Self) -> Ordering {
+        match (self, other) {
+            (Self::UInt(left), Self::UInt(right)) => left.cmp(&right),
+            (Self::Int(left), Self::Int(right)) => left.cmp(&right),
+            (Self::UInt(left), Self::Int(right)) => {
+                if right < 0 {
+                    Ordering::Greater
+                } else {
+                    left.cmp(&(right as u64))
+                }
+            }
+            (Self::Int(left), Self::UInt(right)) => {
+                if left < 0 {
+                    Ordering::Less
+                } else {
+                    (left as u64).cmp(&right)
+                }
+            }
+            (Self::Float(left), Self::Float(right)) => left.total_cmp(&right),
+            (Self::UInt(left), Self::Float(right)) => compare_uint_float(left, right),
+            (Self::Float(left), Self::UInt(right)) => compare_uint_float(right, left).reverse(),
+            (Self::Int(left), Self::Float(right)) => compare_int_float(left, right),
+            (Self::Float(left), Self::Int(right)) => compare_int_float(right, left).reverse(),
+        }
+    }
+
+    pub(crate) fn equal(self, other: Self) -> bool {
+        match (self, other) {
+            (Self::Float(left), Self::Float(right)) => left == right,
+            (Self::Float(value), _) | (_, Self::Float(value)) if value.is_nan() => false,
+            _ => self.compare(other) == Ordering::Equal,
+        }
+    }
+
+    fn key(self) -> NumericKey {
+        match self {
+            Self::UInt(value) => NumericKey::UInt(value),
+            Self::Int(value) if value >= 0 => NumericKey::UInt(value as u64),
+            Self::Int(value) => NumericKey::Int(value),
+            Self::Float(value) => float_key(value),
+        }
+    }
 }
 
-pub(crate) fn number_bits(value: f64) -> u64 {
+fn compare_uint_float(integer: u64, float: f64) -> Ordering {
+    const U64_EXCLUSIVE_MAX: f64 = 18_446_744_073_709_551_616.0;
+    if !float.is_finite() {
+        return (integer as f64).total_cmp(&float);
+    }
+    if float < 0.0 {
+        return Ordering::Greater;
+    }
+    if float >= U64_EXCLUSIVE_MAX {
+        return Ordering::Less;
+    }
+    let truncated = float.trunc() as u64;
+    match integer.cmp(&truncated) {
+        Ordering::Equal if float.fract() > 0.0 => Ordering::Less,
+        ordering => ordering,
+    }
+}
+
+fn compare_int_float(integer: i64, float: f64) -> Ordering {
+    const I64_EXCLUSIVE_MAX: f64 = 9_223_372_036_854_775_808.0;
+    if !float.is_finite() {
+        return (integer as f64).total_cmp(&float);
+    }
+    if float < i64::MIN as f64 {
+        return Ordering::Greater;
+    }
+    if float >= I64_EXCLUSIVE_MAX {
+        return Ordering::Less;
+    }
+    let truncated = float.trunc() as i64;
+    match integer.cmp(&truncated) {
+        Ordering::Equal if float.fract() > 0.0 => Ordering::Less,
+        Ordering::Equal if float.fract() < 0.0 => Ordering::Greater,
+        ordering => ordering,
+    }
+}
+
+fn number_bits(value: f64) -> u64 {
     if value.is_nan() {
         f64::NAN.to_bits()
     } else if value == 0.0 {
@@ -277,6 +384,17 @@ pub(crate) fn number_bits(value: f64) -> u64 {
     } else {
         value.to_bits()
     }
+}
+
+fn float_key(value: f64) -> NumericKey {
+    const U64_EXCLUSIVE_MAX: f64 = 18_446_744_073_709_551_616.0;
+    if (0.0..U64_EXCLUSIVE_MAX).contains(&value) && value.fract() == 0.0 {
+        return NumericKey::UInt(value as u64);
+    }
+    if value < 0.0 && value >= i64::MIN as f64 && value.fract() == 0.0 {
+        return NumericKey::Int(value as i64);
+    }
+    NumericKey::Float(number_bits(value))
 }
 
 impl Value {
@@ -288,6 +406,7 @@ impl Value {
             Self::Int(_) => Some(ValueType::Int),
             Self::Float(_) => Some(ValueType::Float),
             Self::String(_) => Some(ValueType::String),
+            Self::Bytes(_) => Some(ValueType::Bytes),
             Self::List(_) => Some(ValueType::List),
         }
     }
@@ -329,14 +448,14 @@ impl Value {
             (_, Self::Null) => Ok(Ordering::Greater),
             (Self::Bool(left), Self::Bool(right)) => Ok(left.cmp(right)),
             (Self::String(left), Self::String(right)) => Ok(left.cmp(right)),
+            (Self::Bytes(left), Self::Bytes(right)) => Ok(left.cmp(right)),
             (
                 left @ (Self::UInt(_) | Self::Int(_) | Self::Float(_)),
                 right @ (Self::UInt(_) | Self::Int(_) | Self::Float(_)),
             ) => Ok(left
                 .number(operation)?
                 .unwrap()
-                .as_f64()
-                .total_cmp(&right.number(operation)?.unwrap().as_f64())),
+                .compare(right.number(operation)?.unwrap())),
             (left, _) => Err(left.invalid_type(operation)),
         }
     }
@@ -346,9 +465,10 @@ impl Value {
             (Self::Null, Self::Null) => true,
             (Self::Bool(left), Self::Bool(right)) => left == right,
             (Self::String(left), Self::String(right)) => left == right,
+            (Self::Bytes(left), Self::Bytes(right)) => left == right,
             (Self::List(left), Self::List(right)) => left == right,
             (left, right) => match (left.number("equality"), right.number("equality")) {
-                (Ok(Some(left)), Ok(Some(right))) => left.as_f64() == right.as_f64(),
+                (Ok(Some(left)), Ok(Some(right))) => left.equal(right),
                 _ => false,
             },
         }
@@ -365,10 +485,11 @@ impl Value {
         match self {
             Self::Null => ValueKey::Null,
             Self::Bool(value) => ValueKey::Bool(*value),
-            Self::UInt(value) => ValueKey::Number(number_bits(*value as f64)),
-            Self::Int(value) => ValueKey::Number(number_bits(*value as f64)),
-            Self::Float(value) => ValueKey::Number(number_bits(*value)),
+            Self::UInt(value) => ValueKey::Number(Number::UInt(*value).key()),
+            Self::Int(value) => ValueKey::Number(Number::Int(*value).key()),
+            Self::Float(value) => ValueKey::Number(Number::Float(*value).key()),
             Self::String(value) => ValueKey::String(value.clone()),
+            Self::Bytes(value) => ValueKey::Bytes(value.clone()),
             Self::List(values) => {
                 ValueKey::List(values.iter().map(Self::key).collect::<Vec<_>>().into())
             }
@@ -376,12 +497,20 @@ impl Value {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum NumericKey {
+    UInt(u64),
+    Int(i64),
+    Float(u64),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum ValueKey {
     Null,
     Bool(bool),
-    Number(u64),
+    Number(NumericKey),
     String(Arc<str>),
+    Bytes(Arc<[u8]>),
     List(Arc<[ValueKey]>),
 }
 
@@ -394,6 +523,13 @@ impl fmt::Display for Value {
             Value::Int(i) => write!(f, "{i}"),
             Value::Float(fl) => write!(f, "{fl}"),
             Value::String(s) => write!(f, "{s}"),
+            Value::Bytes(bytes) => {
+                write!(f, "0x")?;
+                for byte in bytes.iter() {
+                    write!(f, "{byte:02x}")?;
+                }
+                Ok(())
+            }
             Value::List(l) => {
                 write!(f, "[")?;
                 for (i, v) in l.iter().enumerate() {
@@ -448,5 +584,38 @@ mod tests {
     #[test]
     fn numeric_key_preserves_sign() {
         assert_ne!(Value::Int(-42).key(), Value::Int(42).key());
+    }
+
+    #[test]
+    fn large_integers_do_not_collapse_through_float_conversion() {
+        let lower = Value::UInt(9_007_199_254_740_992);
+        let higher = Value::UInt(9_007_199_254_740_993);
+        assert!(!lower.equal(&higher));
+        assert_ne!(lower.key(), higher.key());
+        assert_eq!(lower.compare(&higher, "test").unwrap(), Ordering::Less);
+    }
+
+    #[test]
+    fn exactly_representable_cross_numeric_values_share_identity() {
+        let integer = Value::UInt(9_007_199_254_740_992);
+        let float = Value::Float(9_007_199_254_740_992.0);
+        assert!(integer.equal(&float));
+        assert_eq!(integer.key(), float.key());
+    }
+
+    #[test]
+    fn integer_float_ordering_is_exact_at_numeric_boundaries() {
+        assert_eq!(
+            Value::UInt(u64::MAX)
+                .compare(&Value::Float(18_446_744_073_709_551_616.0), "test")
+                .unwrap(),
+            Ordering::Less
+        );
+        assert_eq!(
+            Value::Int(i64::MAX)
+                .compare(&Value::Float(9_223_372_036_854_775_808.0), "test")
+                .unwrap(),
+            Ordering::Less
+        );
     }
 }

@@ -13,6 +13,11 @@ pub(super) enum Error {
     Collect(#[from] PolarsError),
     #[error("conversion error: {0}")]
     Conversion(String),
+    #[error("invalid value for {operation}: {value}")]
+    InvalidValue {
+        operation: &'static str,
+        value: String,
+    },
     #[error("data frame does not exist: {0}")]
     FrameNotFound(String),
 }
@@ -109,20 +114,31 @@ fn apply_stat(
 ) -> Result<LazyFrame, Error> {
     Ok(match stat {
         sql::stat::Stat::Select(select) => {
-            let columns: Vec<_> = select.columns.iter().map(convert_expr).collect();
+            let columns = select
+                .columns
+                .iter()
+                .map(convert_expr)
+                .collect::<Result<Vec<_>, _>>()?;
             df.select(columns)
         }
         sql::stat::Stat::GroupAgg(group_agg) => {
             let group_by: Vec<_> = group_agg.group_by.iter().map(String::as_str).collect();
-            let agg: Vec<_> = group_agg.agg.iter().map(convert_expr).collect();
+            let agg = group_agg
+                .agg
+                .iter()
+                .map(convert_expr)
+                .collect::<Result<Vec<_>, _>>()?;
             df.group_by(group_by).agg(agg)
         }
         sql::stat::Stat::Filter(filter) => {
-            let condition = convert_expr(&filter.condition);
+            let condition = convert_expr(&filter.condition)?;
             df.filter(condition)
         }
         sql::stat::Stat::Limit(limit) => {
-            let rows = limit.rows.parse().unwrap();
+            let rows = limit.rows.parse().map_err(|_| Error::InvalidValue {
+                operation: "limit",
+                value: limit.rows.clone(),
+            })?;
             df.limit(rows)
         }
         sql::stat::Stat::Reverse => df.reverse(),
@@ -139,9 +155,9 @@ fn apply_stat(
                     .ok_or_else(|| Error::FrameNotFound(join.other.to_string()))?
                     .inner()
                     .clone();
-                let left_on = convert_expr(&join.left_on);
+                let left_on = convert_expr(&join.left_on)?;
                 let right_on = match &join.right_on {
-                    Some(right_on) => convert_expr(right_on),
+                    Some(right_on) => convert_expr(right_on)?,
                     None => left_on.clone(),
                 };
                 match join.ty {
@@ -165,20 +181,30 @@ fn apply_stat(
     })
 }
 
-fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
-    match expr {
+fn convert_expr(expr: &sql::expr::Expr) -> Result<polars::lazy::dsl::Expr, Error> {
+    Ok(match expr {
         sql::expr::Expr::Col(name) => col(name),
         sql::expr::Expr::Exclude(exclude) => all().exclude_cols(&exclude.columns).as_expr(),
         sql::expr::Expr::Literal(literal) => match literal {
             sql::lexer::Literal::String(string) => lit(string.clone()),
-            sql::lexer::Literal::Int(number) => lit(number.parse::<i64>().unwrap()),
-            sql::lexer::Literal::Float(number) => lit(number.parse::<f64>().unwrap()),
+            sql::lexer::Literal::Int(number) => {
+                lit(number.parse::<i64>().map_err(|_| Error::InvalidValue {
+                    operation: "literal",
+                    value: number.clone(),
+                })?)
+            }
+            sql::lexer::Literal::Float(number) => {
+                lit(number.parse::<f64>().map_err(|_| Error::InvalidValue {
+                    operation: "literal",
+                    value: number.clone(),
+                })?)
+            }
             sql::lexer::Literal::Bool(bool) => lit(*bool),
             sql::lexer::Literal::Null => lit(NULL),
         },
         sql::expr::Expr::Binary(binary) => {
-            let left = convert_expr(&binary.left);
-            let right = convert_expr(&binary.right);
+            let left = convert_expr(&binary.left)?;
+            let right = convert_expr(&binary.right)?;
             match binary.operator {
                 sql::expr::BinaryOperator::Add => left + right,
                 sql::expr::BinaryOperator::Sub => left - right,
@@ -197,7 +223,7 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
             }
         }
         sql::expr::Expr::Unary(unary) => {
-            let expr = convert_expr(&unary.expr);
+            let expr = convert_expr(&unary.expr)?;
             match unary.operator {
                 sql::expr::UnaryOperator::Neg => expr.neg(),
                 sql::expr::UnaryOperator::Not => expr.not(),
@@ -225,23 +251,27 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
             sql::expr::StandaloneOperator::Len => len(),
         },
         sql::expr::Expr::SortBy(sort_by) => {
-            let columns: Vec<_> = sort_by.pairs.iter().map(|(_, c)| convert_expr(c)).collect();
+            let columns: Vec<_> = sort_by
+                .pairs
+                .iter()
+                .map(|(_, c)| convert_expr(c))
+                .collect::<Result<Vec<_>, _>>()?;
             let descending = sort_by
                 .pairs
                 .iter()
                 .map(|(o, _)| matches!(o, SortOrder::Desc));
-            let expr = convert_expr(&sort_by.expr);
+            let expr = convert_expr(&sort_by.expr)?;
             let options = SortMultipleOptions::default().with_order_descending_multi(descending);
             expr.sort_by(columns, options)
         }
         sql::expr::Expr::Sort(sort) => {
-            let expr = convert_expr(&sort.expr);
+            let expr = convert_expr(&sort.expr)?;
             let options =
                 SortOptions::default().with_order_descending(matches!(sort.order, SortOrder::Desc));
             expr.sort(options)
         }
         sql::expr::Expr::Alias(alias) => {
-            let expr = convert_expr(&alias.expr);
+            let expr = convert_expr(&alias.expr)?;
             expr.alias(&alias.name)
         }
         sql::expr::Expr::Conditional(conditional) => {
@@ -250,18 +280,18 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
                 Then(polars::lazy::dsl::Then),
                 ChainedThen(polars::lazy::dsl::ChainedThen),
             }
-            let when_expr = convert_expr(&conditional.first_case.when);
-            let then_expr = convert_expr(&conditional.first_case.then);
+            let when_expr = convert_expr(&conditional.first_case.when)?;
+            let then_expr = convert_expr(&conditional.first_case.then)?;
             let mut case = Case::Then(when(when_expr).then(then_expr));
             for case_expr in &conditional.other_cases {
-                let when_expr = convert_expr(&case_expr.when);
-                let then_expr = convert_expr(&case_expr.then);
+                let when_expr = convert_expr(&case_expr.when)?;
+                let then_expr = convert_expr(&case_expr.then)?;
                 case = Case::ChainedThen(match case {
                     Case::Then(case) => case.when(when_expr).then(then_expr),
                     Case::ChainedThen(case) => case.when(when_expr).then(then_expr),
                 });
             }
-            let otherwise = convert_expr(&conditional.otherwise);
+            let otherwise = convert_expr(&conditional.otherwise)?;
             match case {
                 Case::Then(case) => case.otherwise(otherwise),
                 Case::ChainedThen(case) => case.otherwise(otherwise),
@@ -274,36 +304,36 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
                 sql::lexer::Type::Int => DataType::Int64,
                 sql::lexer::Type::Float => DataType::Float64,
             };
-            let expr = convert_expr(&cast.expr);
+            let expr = convert_expr(&cast.expr)?;
             expr.cast(ty)
         }
         sql::expr::Expr::Log(log) => {
-            let expr = convert_expr(&log.expr);
+            let expr = convert_expr(&log.expr)?;
             expr.log(lit(log.base))
         }
         sql::expr::Expr::Str(str) => match str.as_ref() {
             sql::expr::StrExpr::Contains(contains) => {
-                let str = convert_expr(&contains.str);
-                let pattern = convert_expr(&contains.pattern);
+                let str = convert_expr(&contains.str)?;
+                let pattern = convert_expr(&contains.pattern)?;
                 str.str().contains(pattern, true)
             }
             sql::expr::StrExpr::Extract(extract) => {
-                let str = convert_expr(&extract.str);
-                let pattern = convert_expr(&extract.pattern);
+                let str = convert_expr(&extract.str)?;
+                let pattern = convert_expr(&extract.pattern)?;
                 str.str().extract(pattern, extract.group)
             }
             sql::expr::StrExpr::ExtractAll(extract_all) => {
-                let str = convert_expr(&extract_all.str);
-                let pattern = convert_expr(&extract_all.pattern);
+                let str = convert_expr(&extract_all.str)?;
+                let pattern = convert_expr(&extract_all.pattern)?;
                 str.str().extract_all(pattern)
             }
             sql::expr::StrExpr::Split(split) => {
-                let str = convert_expr(&split.str);
-                let pattern = convert_expr(&split.pattern);
+                let str = convert_expr(&split.str)?;
+                let pattern = convert_expr(&split.pattern)?;
                 str.str().split(pattern)
             }
         },
-    }
+    })
 }
 
 pub(super) fn frame_from_dynamic(frame: dynamic::Frame) -> std::result::Result<LazyFrame, Error> {
@@ -328,6 +358,10 @@ pub(super) fn frame_from_dynamic(frame: dynamic::Frame) -> std::result::Result<L
                         })
                         .collect::<Vec<_>>();
                     Series::from_any_values(name, &values, true)?.into_column()
+                }
+                ColumnData::Bytes(values) => {
+                    let values = values.iter().map(Option::as_deref).collect::<Vec<_>>();
+                    Column::new(name, values)
                 }
                 ColumnData::List(values) => {
                     let values = values
@@ -388,6 +422,13 @@ pub(super) fn frame_to_dynamic(frame: &DataFrame) -> std::result::Result<dynamic
                         .map(|value| value.map(Into::into))
                         .collect(),
                 ),
+                DataType::Binary => ColumnData::Bytes(
+                    column
+                        .binary()?
+                        .iter()
+                        .map(|value| value.map(Into::into))
+                        .collect(),
+                ),
                 DataType::List(_) => {
                     let column = column.list()?;
                     let values = (0..column.len())
@@ -430,6 +471,7 @@ fn value_to_any(value: dynamic::Value) -> std::result::Result<AnyValue<'static>,
         dynamic::Value::Int(v) => AnyValue::Int64(v),
         dynamic::Value::Float(v) => AnyValue::Float64(v),
         dynamic::Value::String(v) => AnyValue::StringOwned(v.to_string().into()),
+        dynamic::Value::Bytes(v) => AnyValue::BinaryOwned(v.to_vec()),
         dynamic::Value::List(v) => {
             let values = v
                 .iter()
@@ -444,11 +486,30 @@ fn value_from_any(any: AnyValue) -> std::result::Result<dynamic::Value, Error> {
     Ok(match any {
         AnyValue::Null => dynamic::Value::Null,
         AnyValue::Boolean(v) => dynamic::Value::Bool(v),
+        AnyValue::UInt8(v) => dynamic::Value::UInt(v.into()),
+        AnyValue::UInt16(v) => dynamic::Value::UInt(v.into()),
+        AnyValue::UInt32(v) => dynamic::Value::UInt(v.into()),
         AnyValue::UInt64(v) => dynamic::Value::UInt(v),
+        AnyValue::UInt128(v) => {
+            dynamic::Value::UInt(u64::try_from(v).map_err(|_| {
+                Error::Conversion(format!("unsigned integer {v} does not fit in u64"))
+            })?)
+        }
+        AnyValue::Int8(v) => dynamic::Value::Int(v.into()),
+        AnyValue::Int16(v) => dynamic::Value::Int(v.into()),
+        AnyValue::Int32(v) => dynamic::Value::Int(v.into()),
         AnyValue::Int64(v) => dynamic::Value::Int(v),
+        AnyValue::Int128(v) => dynamic::Value::Int(
+            i64::try_from(v)
+                .map_err(|_| Error::Conversion(format!("integer {v} does not fit in i64")))?,
+        ),
+        AnyValue::Float16(v) => dynamic::Value::Float(v.into()),
+        AnyValue::Float32(v) => dynamic::Value::Float(v.into()),
         AnyValue::Float64(v) => dynamic::Value::Float(v),
         AnyValue::String(v) => dynamic::Value::String(v.to_string().into()),
         AnyValue::StringOwned(v) => dynamic::Value::String(v.to_string().into()),
+        AnyValue::Binary(v) => dynamic::Value::Bytes(v.into()),
+        AnyValue::BinaryOwned(v) => dynamic::Value::Bytes(v.into()),
         AnyValue::List(s) => {
             let values = s
                 .iter()

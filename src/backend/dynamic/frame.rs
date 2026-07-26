@@ -11,6 +11,7 @@ pub enum ColumnData {
     Int(Vec<Option<i64>>),
     Float(Vec<Option<f64>>),
     String(Vec<Option<Arc<str>>>),
+    Bytes(Vec<Option<Arc<[u8]>>>),
     List(Vec<Option<Arc<[Value]>>>),
     Mixed(Vec<Value>),
 }
@@ -48,6 +49,7 @@ impl ColumnData {
             Some(ValueType::Int) => typed!(Int),
             Some(ValueType::Float) => typed!(Float),
             Some(ValueType::String) => typed!(String),
+            Some(ValueType::Bytes) => typed!(Bytes),
             Some(ValueType::List) => typed!(List),
             None => Self::Mixed(values),
         }
@@ -60,6 +62,7 @@ impl ColumnData {
             ColumnData::Int(v) => v.len(),
             ColumnData::Float(v) => v.len(),
             ColumnData::String(v) => v.len(),
+            ColumnData::Bytes(v) => v.len(),
             ColumnData::List(v) => v.len(),
             ColumnData::Mixed(v) => v.len(),
         }
@@ -78,6 +81,9 @@ impl ColumnData {
             ColumnData::String(v) => v[index]
                 .as_ref()
                 .map_or(Value::Null, |s| Value::String(s.clone())),
+            ColumnData::Bytes(v) => v[index]
+                .as_ref()
+                .map_or(Value::Null, |b| Value::Bytes(b.clone())),
             ColumnData::List(v) => v[index]
                 .as_ref()
                 .map_or(Value::Null, |l| Value::List(l.clone())),
@@ -92,6 +98,7 @@ impl ColumnData {
             ColumnData::Int(_) => Some(ValueType::Int),
             ColumnData::Float(_) => Some(ValueType::Float),
             ColumnData::String(_) => Some(ValueType::String),
+            ColumnData::Bytes(_) => Some(ValueType::Bytes),
             ColumnData::List(_) => Some(ValueType::List),
             ColumnData::Mixed(_) => None,
         }
@@ -105,6 +112,9 @@ impl ColumnData {
             ColumnData::Float(v) => ColumnData::Float(indices.iter().map(|&i| v[i]).collect()),
             ColumnData::String(v) => {
                 ColumnData::String(indices.iter().map(|&i| v[i].clone()).collect())
+            }
+            ColumnData::Bytes(v) => {
+                ColumnData::Bytes(indices.iter().map(|&i| v[i].clone()).collect())
             }
             ColumnData::List(v) => {
                 ColumnData::List(indices.iter().map(|&i| v[i].clone()).collect())
@@ -144,6 +154,10 @@ impl ColumnData {
             ColumnData::String(v) => v
                 .into_iter()
                 .map(|opt| opt.map_or(Value::Null, Value::String))
+                .collect(),
+            ColumnData::Bytes(v) => v
+                .into_iter()
+                .map(|opt| opt.map_or(Value::Null, Value::Bytes))
                 .collect(),
             ColumnData::List(v) => v
                 .into_iter()

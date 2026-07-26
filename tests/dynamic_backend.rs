@@ -119,6 +119,30 @@ fn numeric_results_follow_float_then_int_then_uint_promotion() {
 }
 
 #[test]
+fn integer_arithmetic_reports_overflow_and_invalid_mixed_ranges() {
+    let overflow = Frame::new(vec![Column::new("value", [u64::MAX])]).unwrap();
+    assert!(matches!(
+        run(overflow, "select value + 1"),
+        Err(Error::InvalidValue {
+            operation: "arithmetic",
+            ..
+        })
+    ));
+    let mixed = Frame::new(vec![
+        Column::new("unsigned", [u64::MAX]),
+        Column::new("signed", [1_i64]),
+    ])
+    .unwrap();
+    assert!(matches!(
+        run(mixed, "select unsigned + signed"),
+        Err(Error::InvalidValue {
+            operation: "arithmetic",
+            ..
+        })
+    ));
+}
+
+#[test]
 fn filter_sort_limit_and_reverse_are_row_operations() {
     let frame = Frame::new(vec![
         Column::new("value", [3_i64, 1, 4, 2]),

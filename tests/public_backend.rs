@@ -107,8 +107,9 @@ fn polars_boundary_round_trips_crate_owned_frame_types() {
         Column::new("bool", [Some(true), None]),
         Column::new("uint", [Some(1_u64), None]),
         Column::new("int", [Some(-1_i64), None]),
-        Column::new("float", [Some(1.5_f64), None]),
+        Column::new("float", [Some(2.5_f64), None]),
         Column::new("string", [Some("one"), None]),
+        Column::new("bytes", [Some(vec![1_u8, 2]), None]),
         Column::new("list", [vec![Value::Int(1), Value::Int(2)], vec![]]),
     ])
     .unwrap();
@@ -119,4 +120,21 @@ fn polars_boundary_round_trips_crate_owned_frame_types() {
         .to_dynamic()
         .unwrap();
     assert_eq!(actual, expected);
+}
+#[cfg(feature = "polars-backend")]
+#[test]
+fn invalid_numeric_literals_return_errors_instead_of_panicking() {
+    use dfsql::{Executor, Frame, backend::dynamic::Column};
+    let input = Frame::new(vec![Column::new("id", [1_i64])]).unwrap();
+    let mut executor = Executor::from_frame("table", input);
+    assert!(
+        executor
+            .execute(&sql::parse("select 999999999999999999999999999").unwrap())
+            .is_err()
+    );
+    assert!(
+        executor
+            .execute(&sql::parse("limit 184467440737095516160").unwrap())
+            .is_err()
+    );
 }
