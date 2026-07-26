@@ -2,12 +2,12 @@ use std::{collections::HashMap, path::PathBuf};
 
 use crate::{
     Executor,
+    file_ops::{read_df_file, write_df_output},
     handler::LineExecutor,
     io::{read_repl_sql_file, read_sql_file, write_repl_sql_output},
     visual::SqlHelper,
 };
 use anyhow::{anyhow, bail};
-use banyc_polars_util::{read_df_file, write_df_output};
 use clap::Parser;
 use polars::prelude::*;
 use rustyline::{Editor, error::ReadlineError};

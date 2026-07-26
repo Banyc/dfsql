@@ -10,7 +10,7 @@ repository = "https://github.com/Banyc/dfsql"
 
 [dependencies]
 anyhow = { version = "1", optional = true }
-banyc_polars_util = { version = "0.7", optional = true }
+hdv = { version = "0.7", default-features = false, optional = true }
 winnow = "1"
 clap = { version = "4", features = ["derive"], optional = true }
 fancy-regex = { version = "0.18", optional = true }
@@ -31,7 +31,7 @@ thiserror = "2"
 [features]
 default = []
 polars-backend = ["dep:polars"]
-cli = ["anyhow", "clap", "fancy-regex", "banyc_polars_util", "rustyline", "polars-backend"]
+cli = ["anyhow", "clap", "fancy-regex", "dep:hdv", "polars/json", "rustyline", "polars-backend"]
 
 [[bin]]
 name = "dfsql"

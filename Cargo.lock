@@ -204,17 +204,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
-name = "banyc_polars_util"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f425d14ad5e226c34d8fd8941ee7e35d6f6fa5dcab83ba5e671afedacabe9b02"
-dependencies = [
- "anyhow",
- "hdv",
- "polars",
-]
-
-[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -595,9 +584,9 @@ name = "dfsql"
 version = "0.16.0"
 dependencies = [
  "anyhow",
- "banyc_polars_util",
  "clap",
  "fancy-regex",
+ "hdv",
  "polars",
  "regex",
  "rustyline",
@@ -984,7 +973,6 @@ checksum = "66ae57c954bb71c85a9a70befc83969906424585209932cd77a8396c8a7824c5"
 dependencies = [
  "bincode 2.0.1",
  "integer-encoding",
- "polars",
  "ron",
  "serde",
  "strum",

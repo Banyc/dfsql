@@ -3,6 +3,8 @@ pub mod backend;
 pub mod cli;
 pub mod dynamic;
 #[cfg(feature = "cli")]
+pub mod file_ops;
+#[cfg(feature = "cli")]
 pub mod handler;
 #[cfg(feature = "cli")]
 pub mod io;
