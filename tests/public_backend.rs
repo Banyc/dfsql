@@ -1,7 +1,7 @@
 use dfsql::sql;
 #[test]
 fn dynamic_columns_use_typed_data() {
-    use dfsql::dynamic::{Column, ColumnData, Value};
+    use dfsql::backend::dynamic::{Column, ColumnData, Value};
     let columns = [
         Column::new("bool", [true]),
         Column::new("uint", [1_u64]),
@@ -28,7 +28,7 @@ fn dynamic_columns_use_typed_data() {
 }
 #[test]
 fn dynamic_executor_collects_the_current_frame() {
-    use dfsql::dynamic::{Column, Executor, Frame, MaterializedFrame};
+    use dfsql::backend::dynamic::{Column, Executor, Frame, MaterializedFrame};
     let input = Frame::new(vec![Column::new("id", [1_i64, 2])]).unwrap();
     let executor = Executor::from_frame("table", input.clone());
     let output: MaterializedFrame = executor.collect().unwrap();
@@ -39,7 +39,7 @@ fn dynamic_executor_collects_the_current_frame() {
 fn root_facade_uses_dynamic_backend_without_polars() {
     use dfsql::{
         Executor, Frame,
-        dynamic::{Column, ColumnData},
+        backend::dynamic::{Column, ColumnData},
     };
     let input = Frame::new(vec![
         Column::new("id", [3_i64, 1, 2]),
@@ -104,7 +104,7 @@ fn explicit_polars_names_alias_the_shadowing_root_facade() {
 #[cfg(feature = "polars-backend")]
 #[test]
 fn polars_backend_namespace_exposes_concrete_executor() {
-    use dfsql::polars_backend::{Error, Executor, Frame, MaterializedFrame};
+    use dfsql::backend::polars_backend::{Error, Executor, Frame, MaterializedFrame};
     use polars::prelude::IntoLazy;
     let input: Frame = polars::df!("id" => [2_i64, 1]).unwrap().lazy();
     let mut executor = Executor::from_frame("table", input);
@@ -128,7 +128,7 @@ fn polars_backend_namespace_exposes_concrete_executor() {
 #[cfg(feature = "polars-backend")]
 #[test]
 fn dynamic_backend_remains_available_when_polars_is_selected() {
-    use dfsql::dynamic::{Column, Executor, Frame};
+    use dfsql::backend::dynamic::{Column, Executor, Frame};
     let input = Frame::new(vec![Column::new("id", [2_i64, 1])]).unwrap();
     let mut executor = Executor::from_frame("table", input);
     executor.execute(&sql::parse("sort id").unwrap()).unwrap();

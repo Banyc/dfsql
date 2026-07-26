@@ -1151,7 +1151,7 @@ mod tests {
 
     #[test]
     fn unary_null_and_nan_predicates_do_not_propagate_null() {
-        use crate::dynamic::Value;
+        use crate::backend::dynamic::Value;
         let frame = Frame::new(vec![Column::new(
             "a",
             vec![Value::Null, Value::Int(1), Value::Float(f64::NAN)],

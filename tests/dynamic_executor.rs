@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use dfsql::dynamic::{Column, Error, Executor, Frame, Value};
+use dfsql::backend::dynamic::{Column, Error, Executor, Frame, Value};
 use dfsql::sql::{
     S, SortOrder,
     expr::{Expr, SortByExpr, UnaryExpr, UnaryOperator},

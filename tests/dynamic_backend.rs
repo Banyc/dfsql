@@ -1,5 +1,5 @@
 use dfsql::{
-    dynamic::{Column, ColumnData, Error, Executor, Frame, Value},
+    backend::dynamic::{Column, ColumnData, Error, Executor, Frame, Value},
     sql,
 };
 use std::{collections::HashMap, sync::Arc};

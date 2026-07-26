@@ -23,8 +23,8 @@ Enabling `polars-backend` makes those root names use the Polars backend:
 dfsql = { version = "0.16", features = ["polars-backend"] }
 ```
 
-The dynamic backend is still compiled and remains available explicitly through `dfsql::dynamic::{Executor,Frame}`.
-The Polars backend is available explicitly through `dfsql::polars_backend::{Executor,Frame}`
+The dynamic backend is still compiled and remains available explicitly through `dfsql::backend::dynamic::{Executor,Frame}`.
+The Polars backend is available explicitly through `dfsql::backend::polars_backend::{Executor,Frame}`
 when the feature is enabled.
 
 The `cli` feature enables the

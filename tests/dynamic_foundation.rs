@@ -1,4 +1,4 @@
-use dfsql::dynamic::*;
+use dfsql::backend::dynamic::*;
 
 #[test]
 fn typed_columns_preserve_nulls() {
