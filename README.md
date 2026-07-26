@@ -16,16 +16,17 @@ cargo install dfsql --features cli
 Without Cargo features, the root `Executor`, `Frame`, `MaterializedFrame`,
 `Error`, and `Result` names use the dynamic backend.
 
-Enabling `polars-backend` makes those root names use the Polars backend:
+Enabling `polars-backend` makes the root executor use Polars internally:
 
 ```toml
 [dependencies]
 dfsql = { version = "0.16", features = ["polars-backend"] }
 ```
 
-The dynamic backend is still compiled and remains available explicitly through `dfsql::backend::dynamic::{Executor,Frame}`.
-The Polars backend is available explicitly through `dfsql::backend::polars_backend::{Executor,Frame}`
-when the feature is enabled.
+The root `Frame` and `MaterializedFrame` types encapsulate the selected
+implementation, so Polars types are not part of dfsql's public API. The
+dynamic backend is still compiled and remains available explicitly through
+`dfsql::backend::dynamic::{Executor,Frame}`.
 
 The `cli` feature enables the
 command-line application that uses Polars.
@@ -34,7 +35,7 @@ command-line application that uses Polars.
 
 The `cli` feature reads and writes CSV (`.csv`),
 JSON arrays (`.json`), JSON Lines (`.jsonl` or `.ndjson`), HDV binary (`.hdvb`),
-and HDV text (`.hdvt`) files via `dfsql::cli::file_ops`.
+and HDV text (`.hdvt`) files via `dfsql::file_ops`.
 
 HDV conversion uses the core `hdv` crate without its Polars feature. The
 Polars conversion lives in dfsql, so upgrading Polars does not require a

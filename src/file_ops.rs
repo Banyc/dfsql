@@ -1,5 +1,5 @@
 use crate::{Frame, MaterializedFrame};
-use anyhow::{anyhow, bail, ensure, Context};
+use anyhow::{Context, anyhow, bail, ensure};
 use hdv::format::{AtomScheme, AtomType, AtomValue, ValueRow};
 use hdv::io::{
     bin::{HdvBinRawReader, HdvBinRawWriter},
@@ -45,22 +45,30 @@ impl FileFormat {
 pub fn read_df_file(path: impl AsRef<Path>) -> anyhow::Result<Frame> {
     let path = path.as_ref();
     match FileFormat::from_path(path)? {
-        FileFormat::Csv => Ok(LazyCsvReader::new(PlRefPath::try_from_path(path)?)
-            .with_has_header(true)
-            .with_infer_schema_length(None)
-            .finish()?),
+        FileFormat::Csv => Ok(Frame::from_inner(
+            LazyCsvReader::new(PlRefPath::try_from_path(path)?)
+                .with_has_header(true)
+                .with_infer_schema_length(None)
+                .finish()?,
+        )),
         FileFormat::Json => {
             let input = open_input(path)?;
-            Ok(JsonReader::new(input)
-                .with_json_format(JsonFormat::Json)
-                .finish()?
-                .lazy())
+            Ok(Frame::from_inner(
+                JsonReader::new(input)
+                    .with_json_format(JsonFormat::Json)
+                    .finish()?
+                    .lazy(),
+            ))
         }
-        FileFormat::JsonLines => Ok(LazyJsonLineReader::new(PlRefPath::try_from_path(path)?)
-            .with_infer_schema_length(None)
-            .finish()?),
-        FileFormat::HdvBinary => Ok(read_hdv_binary(open_input(path)?)?.lazy()),
-        FileFormat::HdvText => Ok(read_hdv_text(open_input(path)?)?.lazy()),
+        FileFormat::JsonLines => Ok(Frame::from_inner(
+            LazyJsonLineReader::new(PlRefPath::try_from_path(path)?)
+                .with_infer_schema_length(None)
+                .finish()?,
+        )),
+        FileFormat::HdvBinary => Ok(Frame::from_inner(
+            read_hdv_binary(open_input(path)?)?.lazy(),
+        )),
+        FileFormat::HdvText => Ok(Frame::from_inner(read_hdv_text(open_input(path)?)?.lazy())),
     }
 }
 
@@ -68,17 +76,17 @@ pub fn write_df_output(mut frame: MaterializedFrame, path: impl AsRef<Path>) -> 
     let path = path.as_ref();
     match FileFormat::from_path(path)? {
         FileFormat::Csv => {
-            CsvWriter::new(create_output(path)?).finish(&mut frame)?;
+            CsvWriter::new(create_output(path)?).finish(frame.inner_mut())?;
         }
         FileFormat::Json => {
             JsonWriter::new(create_output(path)?)
                 .with_json_format(JsonFormat::Json)
-                .finish(&mut frame)?;
+                .finish(frame.inner_mut())?;
         }
         FileFormat::JsonLines => {
             JsonWriter::new(create_output(path)?)
                 .with_json_format(JsonFormat::JsonLines)
-                .finish(&mut frame)?;
+                .finish(frame.inner_mut())?;
         }
         FileFormat::HdvBinary => write_hdv_binary(&frame, path)?,
         FileFormat::HdvText => write_hdv_text(&frame, path)?,
@@ -132,7 +140,7 @@ fn write_hdv_text(frame: &MaterializedFrame, path: &Path) -> anyhow::Result<()> 
     Ok(())
 }
 
-fn read_hdv_binary(input: File) -> anyhow::Result<MaterializedFrame> {
+fn read_hdv_binary(input: File) -> anyhow::Result<DataFrame> {
     let mut reader = HdvBinRawReader::new(BufReader::new(input));
     let mut rows = Vec::new();
     loop {
@@ -143,12 +151,12 @@ fn read_hdv_binary(input: File) -> anyhow::Result<MaterializedFrame> {
         }
     }
     let Some(header) = reader.header() else {
-        return Ok(MaterializedFrame::empty());
+        return Ok(DataFrame::empty());
     };
     frame_from_hdv(header, &rows)
 }
 
-fn read_hdv_text(input: File) -> anyhow::Result<MaterializedFrame> {
+fn read_hdv_text(input: File) -> anyhow::Result<DataFrame> {
     let input = UnexpectedEofReader(BufReader::new(input));
     let mut reader = HdvTextRawReader::new(input);
     let mut rows = Vec::new();
@@ -160,7 +168,7 @@ fn read_hdv_text(input: File) -> anyhow::Result<MaterializedFrame> {
         }
     }
     let Some(header) = reader.header() else {
-        return Ok(MaterializedFrame::empty());
+        return Ok(DataFrame::empty());
     };
     frame_from_hdv(header, &rows)
 }
@@ -189,9 +197,10 @@ impl<R: BufRead> BufRead for UnexpectedEofReader<R> {
 }
 
 fn frame_to_hdv(frame: &MaterializedFrame) -> anyhow::Result<(Vec<AtomScheme>, Vec<ValueRow>)> {
-    let mut header = Vec::with_capacity(frame.width());
-    let mut columns: Vec<Vec<Option<AtomValue>>> = Vec::with_capacity(frame.width());
-    for column in frame.columns() {
+    let inner = frame.inner();
+    let mut header = Vec::with_capacity(inner.width());
+    let mut columns: Vec<Vec<Option<AtomValue>>> = Vec::with_capacity(inner.width());
+    for column in inner.columns() {
         let (atom_type, values) = match column.dtype() {
             DataType::Boolean => (
                 AtomType::Bool,
@@ -267,13 +276,13 @@ fn frame_to_hdv(frame: &MaterializedFrame) -> anyhow::Result<(Vec<AtomScheme>, V
         });
         columns.push(values);
     }
-    let rows = (0..frame.height())
+    let rows = (0..inner.height())
         .map(|row| ValueRow::new(columns.iter().map(|column| column[row].clone()).collect()))
         .collect();
     Ok((header, rows))
 }
 
-fn frame_from_hdv(header: &[AtomScheme], rows: &[ValueRow]) -> anyhow::Result<MaterializedFrame> {
+fn frame_from_hdv(header: &[AtomScheme], rows: &[ValueRow]) -> anyhow::Result<DataFrame> {
     let mut columns = Vec::with_capacity(header.len());
     for (index, scheme) in header.iter().enumerate() {
         let name = scheme.name.clone().into();
@@ -319,7 +328,7 @@ fn frame_from_hdv(header: &[AtomScheme], rows: &[ValueRow]) -> anyhow::Result<Ma
         };
         columns.push(column);
     }
-    Ok(MaterializedFrame::new(rows.len(), columns)?)
+    Ok(DataFrame::new(rows.len(), columns)?)
 }
 
 fn hdv_column<T>(
@@ -407,66 +416,71 @@ mod tests {
 
     #[test]
     fn tabular_text_formats_round_trip() {
-        let frame =
+        let frame = MaterializedFrame::from_inner(
             polars::df!("id" => [1_i64, 2], "enabled" => [true, false], "name" => ["one", "two"])
-                .unwrap();
+                .unwrap(),
+        );
         for extension in ["csv", "json", "ndjson", "jsonl"] {
             let actual = round_trip(&frame, extension);
             assert!(
-                frame.equals_missing(&actual),
-                "{extension} round trip produced {actual}"
+                frame.inner().equals_missing(actual.inner()),
+                "{extension} round trip produced {actual:?}"
             );
         }
     }
 
     #[test]
     fn hdv_binary_round_trip_preserves_supported_types_and_nulls() {
-        let frame = MaterializedFrame::new(
-            2,
-            vec![
-                Column::new("bool".into(), vec![Some(true), None]),
-                Column::new("uint".into(), vec![Some(1_u64), None]),
-                Column::new("int".into(), vec![Some(-1_i64), None]),
-                Column::new("f32".into(), vec![Some(1.5_f32), None]),
-                Column::new("f64".into(), vec![Some(2.5_f64), None]),
-                Column::new(
-                    "string".into(),
-                    vec![Some("one".to_owned()), None::<String>],
-                ),
-                Column::new("bytes".into(), vec![Some(vec![1_u8, 2]), None::<Vec<u8>>]),
-            ],
-        )
-        .unwrap();
+        let frame = MaterializedFrame::from_inner(
+            DataFrame::new(
+                2,
+                vec![
+                    Column::new("bool".into(), vec![Some(true), None]),
+                    Column::new("uint".into(), vec![Some(1_u64), None]),
+                    Column::new("int".into(), vec![Some(-1_i64), None]),
+                    Column::new("f32".into(), vec![Some(1.5_f32), None]),
+                    Column::new("f64".into(), vec![Some(2.5_f64), None]),
+                    Column::new(
+                        "string".into(),
+                        vec![Some("one".to_owned()), None::<String>],
+                    ),
+                    Column::new("bytes".into(), vec![Some(vec![1_u8, 2]), None::<Vec<u8>>]),
+                ],
+            )
+            .unwrap(),
+        );
         let actual = round_trip(&frame, "hdvb");
-        assert!(frame.equals_missing(&actual));
+        assert!(frame.inner().equals_missing(actual.inner()));
     }
 
     #[test]
     fn hdv_text_round_trip_preserves_supported_text_types() {
-        let frame = MaterializedFrame::new(
-            2,
-            vec![
-                Column::new("bool".into(), vec![Some(true), None]),
-                Column::new("uint".into(), vec![Some(1_u64), None]),
-                Column::new("int".into(), vec![Some(-1_i64), None]),
-                Column::new("f32".into(), vec![Some(1.5_f32), None]),
-                Column::new("f64".into(), vec![Some(2.5_f64), None]),
-                Column::new(
-                    "string".into(),
-                    vec![Some("one".to_owned()), None::<String>],
-                ),
-            ],
-        )
-        .unwrap();
+        let frame = MaterializedFrame::from_inner(
+            DataFrame::new(
+                2,
+                vec![
+                    Column::new("bool".into(), vec![Some(true), None]),
+                    Column::new("uint".into(), vec![Some(1_u64), None]),
+                    Column::new("int".into(), vec![Some(-1_i64), None]),
+                    Column::new("f32".into(), vec![Some(1.5_f32), None]),
+                    Column::new("f64".into(), vec![Some(2.5_f64), None]),
+                    Column::new(
+                        "string".into(),
+                        vec![Some("one".to_owned()), None::<String>],
+                    ),
+                ],
+            )
+            .unwrap(),
+        );
         let actual = round_trip(&frame, "hdvt");
-        assert!(frame.equals_missing(&actual));
+        assert!(frame.inner().equals_missing(actual.inner()));
     }
 
     #[test]
     fn unsupported_extension_does_not_truncate_existing_file() {
         let path = TestPath::new("unknown");
         std::fs::write(path.as_path(), "keep").unwrap();
-        let frame = polars::df!("id" => [1_i64]).unwrap();
+        let frame = MaterializedFrame::from_inner(polars::df!("id" => [1_i64]).unwrap());
         assert!(write_df_output(frame, path.as_path()).is_err());
         assert_eq!(std::fs::read_to_string(path.as_path()).unwrap(), "keep");
     }

@@ -3,19 +3,27 @@ use std::{collections::HashMap, ops::Neg};
 use polars::prelude::*;
 use thiserror::Error;
 
+use crate::backend::dynamic;
+use crate::backend::dynamic::ColumnData;
 use crate::sql::{self, SortOrder};
 
-pub type Frame = LazyFrame;
-pub type MaterializedFrame = DataFrame;
-pub type Result<T> = std::result::Result<T, Error>;
+#[derive(Debug, Error)]
+pub(super) enum Error {
+    #[error("PolarsError: {0}")]
+    Collect(#[from] PolarsError),
+    #[error("conversion error: {0}")]
+    Conversion(String),
+    #[error("data frame does not exist: {0}")]
+    FrameNotFound(String),
+}
 
-pub struct Executor {
+pub(super) struct Executor {
     frame_name: String,
-    input: HashMap<String, Frame>,
+    input: HashMap<String, super::Frame>,
 }
 
 impl Executor {
-    pub fn from_frame(frame_name: impl Into<String>, frame: Frame) -> Self {
+    pub(super) fn from_frame(frame_name: impl Into<String>, frame: super::Frame) -> Self {
         let frame_name = frame_name.into();
         Self {
             input: HashMap::from([(frame_name.clone(), frame)]),
@@ -23,40 +31,47 @@ impl Executor {
         }
     }
 
-    pub fn new(frame_name: impl Into<String>, input: HashMap<String, Frame>) -> Option<Self> {
+    pub(super) fn new(
+        frame_name: impl Into<String>,
+        input: HashMap<String, super::Frame>,
+    ) -> Option<Self> {
         let frame_name = frame_name.into();
         input
             .contains_key(&frame_name)
             .then_some(Self { frame_name, input })
     }
 
-    pub fn input(&self) -> &HashMap<String, Frame> {
+    pub(super) fn input(&self) -> &HashMap<String, super::Frame> {
         &self.input
     }
 
-    pub fn into_input(self) -> HashMap<String, Frame> {
+    pub(super) fn into_input(self) -> HashMap<String, super::Frame> {
         self.input
     }
 
-    pub fn insert_frame(&mut self, frame_name: impl Into<String>, frame: Frame) -> Option<Frame> {
+    pub(super) fn insert_frame(
+        &mut self,
+        frame_name: impl Into<String>,
+        frame: super::Frame,
+    ) -> Option<super::Frame> {
         self.input.insert(frame_name.into(), frame)
     }
 
-    pub fn frame_name(&self) -> &str {
+    pub(super) fn frame_name(&self) -> &str {
         &self.frame_name
     }
 
-    pub fn frame(&self) -> &Frame {
+    pub(super) fn frame(&self) -> &super::Frame {
         &self.input[&self.frame_name]
     }
 
-    pub fn frame_mut(&mut self) -> &mut Frame {
+    pub(super) fn frame_mut(&mut self) -> &mut super::Frame {
         self.input
             .get_mut(&self.frame_name)
             .expect("the active frame is always present")
     }
 
-    pub fn set_frame_name(&mut self, frame_name: impl Into<String>) -> Result<()> {
+    pub(super) fn set_frame_name(&mut self, frame_name: impl Into<String>) -> Result<(), Error> {
         let frame_name = frame_name.into();
         if !self.input.contains_key(&frame_name) {
             return Err(Error::FrameNotFound(frame_name));
@@ -65,32 +80,33 @@ impl Executor {
         Ok(())
     }
 
-    pub fn set_frame(&mut self, frame: Frame) {
+    pub(super) fn set_frame(&mut self, frame: super::Frame) {
         self.input.insert(self.frame_name.clone(), frame);
     }
 
-    pub fn execute(&mut self, statements: &sql::S) -> Result<()> {
-        let mut frame = self.frame().clone();
+    pub(super) fn execute(&mut self, statements: &sql::S) -> Result<(), Error> {
+        let mut frame = self.frame().inner().clone();
         for stat in &statements.statements {
             frame = apply_stat(frame, stat, &mut self.input)?;
             if let sql::stat::Stat::Use(r#use) = stat {
                 self.set_frame_name(r#use.df_name.clone())?;
             }
-            self.set_frame(frame.clone());
+            self.set_frame(super::Frame::from_inner(frame.clone()));
         }
         Ok(())
     }
 
-    pub fn collect(&self) -> Result<MaterializedFrame> {
-        self.frame().clone().collect().map_err(Error::from)
+    pub(super) fn collect(&self) -> Result<super::MaterializedFrame, Error> {
+        let df = self.frame().inner().clone().collect()?;
+        Ok(super::MaterializedFrame::from_inner(df))
     }
 }
 
 fn apply_stat(
-    df: Frame,
+    df: LazyFrame,
     stat: &sql::stat::Stat,
-    others: &mut HashMap<String, Frame>,
-) -> Result<Frame> {
+    others: &mut HashMap<String, super::Frame>,
+) -> Result<LazyFrame, Error> {
     Ok(match stat {
         sql::stat::Stat::Select(select) => {
             let columns: Vec<_> = select.columns.iter().map(convert_expr).collect();
@@ -121,6 +137,7 @@ fn apply_stat(
                 let other = others
                     .get(&join.other)
                     .ok_or_else(|| Error::FrameNotFound(join.other.to_string()))?
+                    .inner()
                     .clone();
                 let left_on = convert_expr(&join.left_on);
                 let right_on = match &join.right_on {
@@ -135,28 +152,17 @@ fn apply_stat(
                 }
             }
         },
-        sql::stat::Stat::Use(r#use) => {
-            let df_name = &r#use.df_name;
-            others
-                .get(df_name)
-                .ok_or_else(|| Error::FrameNotFound(df_name.clone()))?
-                .clone()
-        }
+        sql::stat::Stat::Use(r#use) => others
+            .get(&r#use.df_name)
+            .ok_or_else(|| Error::FrameNotFound(r#use.df_name.clone()))?
+            .inner()
+            .clone(),
         sql::stat::Stat::Clone(clone) => {
-            let df_name = &clone.df_name;
             let df_clone = df.clone();
-            others.insert(df_name.into(), df_clone);
+            others.insert(clone.df_name.clone(), super::Frame::from_inner(df_clone));
             df
         }
     })
-}
-
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("LazyFrame::collect: {0}")]
-    Collect(#[from] PolarsError),
-    #[error("data frame does not exist: {0}")]
-    FrameNotFound(String),
 }
 
 fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
@@ -300,6 +306,164 @@ fn convert_expr(expr: &sql::expr::Expr) -> polars::lazy::dsl::Expr {
     }
 }
 
+pub(super) fn frame_from_dynamic(frame: dynamic::Frame) -> std::result::Result<LazyFrame, Error> {
+    let height = frame.height();
+    let columns = frame
+        .into_columns()
+        .into_iter()
+        .map(|column| {
+            let name = column.name().into();
+            let column = match column.into_data() {
+                ColumnData::Bool(values) => Column::new(name, values),
+                ColumnData::UInt(values) => Column::new(name, values),
+                ColumnData::Int(values) => Column::new(name, values),
+                ColumnData::Float(values) => Column::new(name, values),
+                ColumnData::String(values) => {
+                    let values = values
+                        .into_iter()
+                        .map(|value| {
+                            value.map_or(AnyValue::Null, |value| {
+                                AnyValue::StringOwned(value.as_ref().into())
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    Series::from_any_values(name, &values, true)?.into_column()
+                }
+                ColumnData::List(values) => {
+                    let values = values
+                        .into_iter()
+                        .map(|value| match value {
+                            Some(value) => value_to_any(dynamic::Value::List(value)),
+                            None => Ok(AnyValue::Null),
+                        })
+                        .collect::<std::result::Result<Vec<_>, Error>>()?;
+                    Series::from_any_values(name, &values, false)?.into_column()
+                }
+                ColumnData::Mixed(values) => {
+                    let values = values
+                        .into_iter()
+                        .map(value_to_any)
+                        .collect::<std::result::Result<Vec<_>, Error>>()?;
+                    Series::from_any_values(name, &values, false)?.into_column()
+                }
+            };
+            Ok(column)
+        })
+        .collect::<std::result::Result<Vec<_>, Error>>()?;
+    Ok(DataFrame::new(height, columns)?.lazy())
+}
+
+pub(super) fn frame_to_dynamic(frame: &DataFrame) -> std::result::Result<dynamic::Frame, Error> {
+    let columns = frame
+        .columns()
+        .iter()
+        .map(|column| {
+            let name = column.name().to_string();
+            let data = match column.dtype() {
+                DataType::Boolean => ColumnData::Bool(column.bool()?.iter().collect()),
+                DataType::UInt8
+                | DataType::UInt16
+                | DataType::UInt32
+                | DataType::UInt64
+                | DataType::UInt128 => {
+                    let column = column.cast(&DataType::UInt64)?;
+                    ColumnData::UInt(column.u64()?.iter().collect())
+                }
+                DataType::Int8
+                | DataType::Int16
+                | DataType::Int32
+                | DataType::Int64
+                | DataType::Int128 => {
+                    let column = column.cast(&DataType::Int64)?;
+                    ColumnData::Int(column.i64()?.iter().collect())
+                }
+                DataType::Float16 | DataType::Float32 | DataType::Float64 => {
+                    let column = column.cast(&DataType::Float64)?;
+                    ColumnData::Float(column.f64()?.iter().collect())
+                }
+                DataType::String => ColumnData::String(
+                    column
+                        .str()?
+                        .iter()
+                        .map(|value| value.map(Into::into))
+                        .collect(),
+                ),
+                DataType::List(_) => {
+                    let column = column.list()?;
+                    let values = (0..column.len())
+                        .map(|index| {
+                            column
+                                .get_as_series(index)
+                                .map(|series| {
+                                    series
+                                        .iter()
+                                        .map(value_from_any)
+                                        .collect::<std::result::Result<Vec<_>, Error>>()
+                                })
+                                .transpose()
+                        })
+                        .collect::<std::result::Result<Vec<_>, Error>>()?;
+                    ColumnData::List(
+                        values
+                            .into_iter()
+                            .map(|value| value.map(Into::into))
+                            .collect(),
+                    )
+                }
+                _ => ColumnData::Mixed(
+                    (0..column.len())
+                        .map(|index| value_from_any(column.get(index)?))
+                        .collect::<std::result::Result<Vec<_>, Error>>()?,
+                ),
+            };
+            Ok(dynamic::Column::from_data(name, data))
+        })
+        .collect::<std::result::Result<Vec<_>, Error>>()?;
+    dynamic::Frame::new(columns).map_err(|error| Error::Conversion(error.to_string()))
+}
+
+fn value_to_any(value: dynamic::Value) -> std::result::Result<AnyValue<'static>, Error> {
+    Ok(match value {
+        dynamic::Value::Null => AnyValue::Null,
+        dynamic::Value::Bool(v) => AnyValue::Boolean(v),
+        dynamic::Value::UInt(v) => AnyValue::UInt64(v),
+        dynamic::Value::Int(v) => AnyValue::Int64(v),
+        dynamic::Value::Float(v) => AnyValue::Float64(v),
+        dynamic::Value::String(v) => AnyValue::StringOwned(v.to_string().into()),
+        dynamic::Value::List(v) => {
+            let values = v
+                .iter()
+                .map(|v| value_to_any(v.clone()))
+                .collect::<std::result::Result<Vec<_>, Error>>()?;
+            AnyValue::List(Series::from_any_values("".into(), &values, false)?)
+        }
+    })
+}
+
+fn value_from_any(any: AnyValue) -> std::result::Result<dynamic::Value, Error> {
+    Ok(match any {
+        AnyValue::Null => dynamic::Value::Null,
+        AnyValue::Boolean(v) => dynamic::Value::Bool(v),
+        AnyValue::UInt64(v) => dynamic::Value::UInt(v),
+        AnyValue::Int64(v) => dynamic::Value::Int(v),
+        AnyValue::Float64(v) => dynamic::Value::Float(v),
+        AnyValue::String(v) => dynamic::Value::String(v.to_string().into()),
+        AnyValue::StringOwned(v) => dynamic::Value::String(v.to_string().into()),
+        AnyValue::List(s) => {
+            let values = s
+                .iter()
+                .map(value_from_any)
+                .collect::<std::result::Result<Vec<_>, Error>>()?;
+            dynamic::Value::List(values.into())
+        }
+        _ => {
+            return Err(Error::Collect(PolarsError::ComputeError(
+                "unsupported AnyValue variant".into(),
+            )));
+        }
+    })
+}
+
 #[rustfmt::skip]
 #[cfg(test)]
 mod tests {
@@ -311,7 +475,7 @@ mod tests {
         let s = "filter x = 0";
         let s = sql::parse(s).unwrap();
         let df = df!("x" => [0, 1]).unwrap();
-        let mut executor = Executor::new("a".to_string(), HashMap::from_iter([("a".to_string(), df.lazy())])).unwrap();
+        let mut executor = Executor::new("a".to_string(), HashMap::from_iter([("a".to_string(), super::super::Frame::from_inner(df.lazy()))])).unwrap();
         executor.execute(&s).unwrap();
         executor.collect().unwrap();
     }
@@ -319,14 +483,14 @@ mod tests {
     #[test]
     fn selector_exclusion_and_log_use_current_polars_expressions() {
       let frame = df!("x" => [1.0_f64, 10.0], "drop" => [false, true]).unwrap().lazy();
-      let mut executor = Executor::from_frame("input", frame);
+      let mut executor = Executor::from_frame("input", super::super::Frame::from_inner(frame));
       executor.execute(&sql::parse("select exclude drop alias log_x log 10 x").unwrap()).unwrap();
       let output = executor.collect().unwrap();
       assert_eq!(output.width(), 2);
-      assert!(output.column("x").is_ok());
-      assert!(output.column("drop").is_err());
+      assert!(output.inner.column("x").is_ok());
+      assert!(output.inner.column("drop").is_err());
       assert_eq!(
-        output.column("log_x").unwrap().f64().unwrap().into_no_null_iter().collect::<Vec<_>>(),
+        output.inner.column("log_x").unwrap().f64().unwrap().into_no_null_iter().collect::<Vec<_>>(),
         [0.0, 1.0]
       );
     }
@@ -336,10 +500,10 @@ mod tests {
         let left = df!("left_id" => [1, 2], "left_value" => ["one", "two"]).unwrap().lazy();
         let right = df!("right_id" => [2, 3], "right_value" => ["two", "three"]).unwrap().lazy();
         let mut executor = Executor::new("left".to_string(),
-            HashMap::from_iter([("left".to_string(), left), ("other".to_string(), right)])).unwrap();
+            HashMap::from_iter([("left".to_string(), super::super::Frame::from_inner(left)), ("other".to_string(), super::super::Frame::from_inner(right))])).unwrap();
         executor.execute(&sql::parse("right join other on left_id right_id").unwrap()).unwrap();
         let joined = executor.collect().unwrap();
         assert_eq!(joined.height(), 2);
-        assert_eq!(joined.column("right_id").unwrap().i32().unwrap().into_no_null_iter().collect::<Vec<_>>(), [2, 3]);
+        assert_eq!(joined.inner.column("right_id").unwrap().i32().unwrap().into_no_null_iter().collect::<Vec<_>>(), [2, 3]);
     }
 }

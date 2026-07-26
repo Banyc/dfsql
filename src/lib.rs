@@ -5,5 +5,3 @@ pub mod cli;
 pub mod file_ops;
 pub mod sql;
 pub use backend::{Error, Executor, Frame, MaterializedFrame, Result};
-#[cfg(feature = "polars-backend")]
-pub use backend::{PolarsExecutor, PolarsFrame, PolarsMaterializedFrame};

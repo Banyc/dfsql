@@ -4,16 +4,15 @@ pub mod visual;
 
 use std::{collections::HashMap, path::PathBuf};
 
-use crate::Executor;
 use crate::cli::{
     handler::LineExecutor,
     io::{read_repl_sql_file, read_sql_file, write_repl_sql_output},
     visual::SqlHelper,
 };
 use crate::file_ops::{read_df_file, write_df_output};
+use crate::{Executor, MaterializedFrame};
 use anyhow::{anyhow, bail};
 use clap::Parser;
-use polars::prelude::*;
 use rustyline::{Editor, error::ReadlineError};
 
 const SQL_EXTENSION: &str = "dfsql";
@@ -69,7 +68,7 @@ impl Cli {
             let df = executor.collect()?;
             match &self.output {
                 Some(output) => write_df_output(df, output)?,
-                None => println!("{df}"),
+                None => println!("{}", df.inner()),
             }
             return Ok(());
         }
@@ -153,7 +152,7 @@ impl Cli {
 
     fn display_and_write_repl_output(&self, handler: &LineExecutor) -> anyhow::Result<()> {
         let df = handler.frame().clone().collect()?;
-        println!("{df}");
+        println!("{}", df.inner());
         if let Some(output) = &self.output {
             write_repl_output(df, handler, output.clone())?;
         }
@@ -180,11 +179,11 @@ fn save(handler: &LineExecutor, path: &str) -> anyhow::Result<()> {
 }
 
 fn write_repl_output(
-    df: DataFrame,
+    df: MaterializedFrame,
     handler: &LineExecutor,
     mut path: PathBuf,
 ) -> anyhow::Result<()> {
-    write_df_output(df.clone(), &path)?;
+    write_df_output(df, &path)?;
 
     path.set_extension(SQL_EXTENSION);
     write_repl_sql_output(handler.history().iter(), path)?;

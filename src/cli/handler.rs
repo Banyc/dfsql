@@ -85,8 +85,8 @@ mod tests {
 
     #[test]
     fn failed_line_restores_all_executor_state() {
-        let first = polars::df!("id" => [1_i64]).unwrap().lazy();
-        let other = polars::df!("id" => [2_i64]).unwrap().lazy();
+        let first = Frame::from_inner(polars::df!("id" => [1_i64]).unwrap().lazy());
+        let other = Frame::from_inner(polars::df!("id" => [2_i64]).unwrap().lazy());
         let executor = Executor::new("first", HashMap::from([("first".to_string(), first), ("other".to_string(), other)])).unwrap();
         let mut handler = LineExecutor::new(executor);
         let error = handler.execute("use other clone leaked use missing".into()).unwrap_err();
