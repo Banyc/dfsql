@@ -149,13 +149,13 @@ fn keyword_or_var(ident: &str) -> Token {
     if let Some(kw) = stat_keyword(&lower) {
         return Token::Stat(kw);
     }
-    match lower.as_str() {
-        "true" => return Token::Literal(Literal::Bool(true)),
-        "false" => return Token::Literal(Literal::Bool(false)),
-        "null" => return Token::Literal(Literal::Null),
-        _ => {}
+    if let Some((_, literal)) = LITERAL_KEYWORDS
+        .iter()
+        .find(|(keyword, _)| *keyword == lower)
+    {
+        return Token::Literal(literal.clone());
     }
-    if let Some(kw) = expr_keyword(ident, &lower) {
+    if let Some(kw) = expr_keyword(&lower) {
         return kw;
     }
     if let Some(kw) = type_keyword(&lower) {
@@ -170,89 +170,110 @@ fn keyword_or_var(ident: &str) -> Token {
     Token::Variable(ident.to_string())
 }
 
+pub(crate) const STAT_KEYWORDS: &[(&str, StatKeyword)] = &[
+    ("select", StatKeyword::Select),
+    ("group", StatKeyword::GroupBy),
+    ("agg", StatKeyword::Agg),
+    ("filter", StatKeyword::Filter),
+    ("limit", StatKeyword::Limit),
+    ("reverse", StatKeyword::Reverse),
+    ("sort", StatKeyword::Sort),
+    ("join", StatKeyword::Join),
+    ("on", StatKeyword::On),
+    ("left", StatKeyword::Left),
+    ("right", StatKeyword::Right),
+    ("inner", StatKeyword::Inner),
+    ("full", StatKeyword::Full),
+    ("use", StatKeyword::Use),
+    ("clone", StatKeyword::Clone),
+];
+
+pub(crate) const EXPR_KEYWORDS: &[(&str, ExprKeyword)] = &[
+    ("sum", ExprKeyword::Sum),
+    ("sqrt", ExprKeyword::Sqrt),
+    ("count", ExprKeyword::Count),
+    ("len", ExprKeyword::Len),
+    ("first", ExprKeyword::First),
+    ("last", ExprKeyword::Last),
+    ("col_sort", ExprKeyword::Sort),
+    ("asc", ExprKeyword::Asc),
+    ("desc", ExprKeyword::Desc),
+    ("col_reverse", ExprKeyword::Reverse),
+    ("mean", ExprKeyword::Mean),
+    ("median", ExprKeyword::Median),
+    ("max", ExprKeyword::Max),
+    ("min", ExprKeyword::Min),
+    ("var", ExprKeyword::Var),
+    ("std", ExprKeyword::Std),
+    ("abs", ExprKeyword::Abs),
+    ("unique", ExprKeyword::Unique),
+    ("by", ExprKeyword::By),
+    ("is", ExprKeyword::Is),
+    ("alias", ExprKeyword::Alias),
+    ("col", ExprKeyword::Col),
+    ("exclude", ExprKeyword::Exclude),
+    ("cast", ExprKeyword::Cast),
+    ("nan", ExprKeyword::Nan),
+    ("all", ExprKeyword::All),
+    ("any", ExprKeyword::Any),
+    ("pow", ExprKeyword::Pow),
+    ("log", ExprKeyword::Log),
+];
+
+pub(crate) const TYPE_KEYWORDS: &[(&str, Type)] = &[
+    ("str", Type::Str),
+    ("uint", Type::UInt),
+    ("int", Type::Int),
+    ("float", Type::Float),
+];
+
+pub(crate) const CONDITIONAL_KEYWORDS: &[(&str, Conditional)] = &[
+    ("if", Conditional::If),
+    ("then", Conditional::Then),
+    ("else", Conditional::Else),
+];
+
+pub(crate) const STRING_KEYWORDS: &[(&str, StringKeyword)] = &[
+    ("contains", StringKeyword::Contains),
+    ("extract", StringKeyword::Extract),
+    ("all", StringKeyword::All),
+    ("split", StringKeyword::Split),
+];
+
+pub(crate) const LITERAL_KEYWORDS: &[(&str, Literal)] = &[
+    ("true", Literal::Bool(true)),
+    ("false", Literal::Bool(false)),
+    ("null", Literal::Null),
+];
+
 fn stat_keyword(s: &str) -> Option<StatKeyword> {
-    Some(match s {
-        "select" => StatKeyword::Select,
-        "group" => StatKeyword::GroupBy,
-        "agg" => StatKeyword::Agg,
-        "filter" => StatKeyword::Filter,
-        "limit" => StatKeyword::Limit,
-        "reverse" => StatKeyword::Reverse,
-        "sort" => StatKeyword::Sort,
-        "join" => StatKeyword::Join,
-        "on" => StatKeyword::On,
-        "left" => StatKeyword::Left,
-        "right" => StatKeyword::Right,
-        "inner" => StatKeyword::Inner,
-        "full" => StatKeyword::Full,
-        "use" => StatKeyword::Use,
-        "clone" => StatKeyword::Clone,
-        _ => return None,
-    })
+    STAT_KEYWORDS
+        .iter()
+        .find_map(|(keyword, value)| (*keyword == s).then_some(*value))
 }
 
-fn expr_keyword(_original: &str, lower: &str) -> Option<Token> {
-    let kw = match lower {
-        "sum" => ExprKeyword::Sum,
-        "sqrt" => ExprKeyword::Sqrt,
-        "count" => ExprKeyword::Count,
-        "len" => ExprKeyword::Len,
-        "first" => ExprKeyword::First,
-        "last" => ExprKeyword::Last,
-        "col_sort" => ExprKeyword::Sort,
-        "asc" => ExprKeyword::Asc,
-        "desc" => ExprKeyword::Desc,
-        "col_reverse" => ExprKeyword::Reverse,
-        "mean" => ExprKeyword::Mean,
-        "median" => ExprKeyword::Median,
-        "max" => ExprKeyword::Max,
-        "min" => ExprKeyword::Min,
-        "var" => ExprKeyword::Var,
-        "std" => ExprKeyword::Std,
-        "abs" => ExprKeyword::Abs,
-        "unique" => ExprKeyword::Unique,
-        "by" => ExprKeyword::By,
-        "is" => ExprKeyword::Is,
-        "alias" => ExprKeyword::Alias,
-        "col" => ExprKeyword::Col,
-        "exclude" => ExprKeyword::Exclude,
-        "cast" => ExprKeyword::Cast,
-        "nan" => ExprKeyword::Nan,
-        "all" => ExprKeyword::All,
-        "any" => ExprKeyword::Any,
-        "pow" => ExprKeyword::Pow,
-        "log" => ExprKeyword::Log,
-        _ => return None,
-    };
-    Some(Token::ExprKeyword(kw))
+fn expr_keyword(s: &str) -> Option<Token> {
+    EXPR_KEYWORDS
+        .iter()
+        .find_map(|(keyword, value)| (*keyword == s).then_some(Token::ExprKeyword(*value)))
 }
 
 fn type_keyword(s: &str) -> Option<Type> {
-    Some(match s {
-        "str" => Type::Str,
-        "uint" => Type::UInt,
-        "int" => Type::Int,
-        "float" => Type::Float,
-        _ => return None,
-    })
+    TYPE_KEYWORDS
+        .iter()
+        .find_map(|(keyword, value)| (*keyword == s).then_some(*value))
 }
 
 fn conditional_keyword(s: &str) -> Option<Conditional> {
-    Some(match s {
-        "if" => Conditional::If,
-        "then" => Conditional::Then,
-        "else" => Conditional::Else,
-        _ => return None,
-    })
+    CONDITIONAL_KEYWORDS
+        .iter()
+        .find_map(|(keyword, value)| (*keyword == s).then_some(*value))
 }
 
 fn string_keyword(s: &str) -> Option<StringKeyword> {
-    Some(match s {
-        "contains" => StringKeyword::Contains,
-        "extract" => StringKeyword::Extract,
-        "split" => StringKeyword::Split,
-        _ => return None,
-    })
+    STRING_KEYWORDS
+        .iter()
+        .find_map(|(keyword, value)| (*keyword == s).then_some(*value))
 }
 
 fn number_literal(input: &mut &str) -> ModalResult<Literal> {
@@ -355,7 +376,7 @@ fn parse_string(input: &mut &str) -> ModalResult<String> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StatKeyword {
     Select,
     GroupBy,

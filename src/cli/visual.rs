@@ -1,5 +1,9 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashSet};
 
+use crate::sql::lexer::{
+    CONDITIONAL_KEYWORDS, EXPR_KEYWORDS, LITERAL_KEYWORDS, STAT_KEYWORDS, STRING_KEYWORDS,
+    TYPE_KEYWORDS,
+};
 use fancy_regex::Regex;
 use rustyline::{Completer, Helper, Hinter, Validator, highlight::Highlighter};
 
@@ -9,67 +13,40 @@ pub struct SqlHelper {
 }
 impl SqlHelper {
     pub fn new() -> Self {
-        let rules = [
-            ("select", color_keyword()),
-            ("group", color_keyword()),
-            ("agg", color_keyword()),
-            ("filter", color_keyword()),
-            ("limit", color_keyword()),
-            ("reverse", color_keyword()),
-            ("sort", color_keyword()),
-            ("describe", color_keyword()),
-            ("join", color_keyword()),
-            ("on", color_keyword()),
-            ("left", color_keyword()),
-            ("right", color_keyword()),
-            ("inner", color_keyword()),
-            ("full", color_keyword()),
-            ("use", color_keyword()),
-            ("clone", color_keyword()),
-            ("abs", color_functor()),
-            ("sum", color_functor()),
-            ("sqrt", color_functor()),
-            ("count", color_functor()),
-            ("len", color_functor()),
-            ("col_sort", color_functor()),
-            ("asc", color_functor()),
-            ("desc", color_functor()),
-            ("col_reverse", color_functor()),
-            ("mean", color_functor()),
-            ("median", color_functor()),
-            ("max", color_functor()),
-            ("min", color_functor()),
-            ("var", color_functor()),
-            ("std", color_functor()),
-            ("first", color_functor()),
-            ("last", color_functor()),
-            ("by", color_functor()),
-            ("is", color_functor()),
-            ("alias", color_functor()),
-            ("col", color_functor()),
-            ("exclude", color_functor()),
-            ("cast", color_functor()),
-            ("contains", color_functor()),
-            ("extract", color_functor()),
-            ("all", color_functor()),
-            ("split", color_functor()),
-            ("unique", color_functor()),
-            ("nan", color_functor()),
-            ("all", color_functor()),
-            ("any", color_functor()),
-            ("pow", color_functor()),
-            ("log", color_functor()),
-            ("if", color_control_flow()),
-            ("then", color_control_flow()),
-            ("else", color_control_flow()),
-            ("str", color_type()),
-            ("int", color_type()),
-            ("float", color_type()),
-        ];
-        let rules = rules.into_iter().map(|(keyword, color)| KeywordColor {
-            keyword: keyword.to_string(),
-            color,
-        });
+        let mut seen = HashSet::new();
+        let rules = STAT_KEYWORDS
+            .iter()
+            .map(|(keyword, _)| (*keyword, color_keyword()))
+            .chain(
+                EXPR_KEYWORDS
+                    .iter()
+                    .map(|(keyword, _)| (*keyword, color_functor())),
+            )
+            .chain(
+                STRING_KEYWORDS
+                    .iter()
+                    .map(|(keyword, _)| (*keyword, color_functor())),
+            )
+            .chain(
+                LITERAL_KEYWORDS
+                    .iter()
+                    .map(|(keyword, _)| (*keyword, color_functor())),
+            )
+            .chain(
+                CONDITIONAL_KEYWORDS
+                    .iter()
+                    .map(|(keyword, _)| (*keyword, color_control_flow())),
+            )
+            .chain(
+                TYPE_KEYWORDS
+                    .iter()
+                    .map(|(keyword, _)| (*keyword, color_type())),
+            )
+            .filter(move |(keyword, _)| seen.insert(*keyword))
+            .map(|(keyword, color)| KeywordColor {
+                keyword: keyword.to_owned(),
+                color,
+            });
         let color = TerminalKeywordHighlighter::new(rules);
         Self { color }
     }
@@ -174,5 +151,20 @@ mod tests {
     fn highlighter_treats_public_keywords_as_literals() {
         let highlighter = TerminalKeywordHighlighter::new([KeywordColor { keyword: "a+b".into(), color: TerminalColor::Yellow }].into_iter());
         assert_eq!(highlighter.replace("a+b ab"), "\x1b[1;33ma+b\x1b[0m ab");
+    }
+
+    #[test]
+    fn sql_helper_uses_the_lexer_keyword_inventory() {
+        let helper = SqlHelper::new();
+        for keyword in STAT_KEYWORDS.iter().map(|(keyword, _)| *keyword)
+            .chain(EXPR_KEYWORDS.iter().map(|(keyword, _)| *keyword))
+            .chain(STRING_KEYWORDS.iter().map(|(keyword, _)| *keyword))
+            .chain(LITERAL_KEYWORDS.iter().map(|(keyword, _)| *keyword))
+            .chain(CONDITIONAL_KEYWORDS.iter().map(|(keyword, _)| *keyword))
+            .chain(TYPE_KEYWORDS.iter().map(|(keyword, _)| *keyword))
+        {
+            assert_ne!(helper.highlight(keyword, 0), keyword, "{keyword} was not highlighted");
+        }
+        assert_eq!(helper.highlight("describe", 0), "describe");
     }
 }
