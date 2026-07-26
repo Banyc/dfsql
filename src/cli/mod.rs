@@ -40,7 +40,7 @@ impl Cli {
         let mut first_input_name = None;
         for inp in &self.input {
             let (name, path) = inp
-                .split_once(',')
+                .split_once('.')
                 .map(|(n, p)| (n.to_owned(), p))
                 .unwrap_or_else(|| {
                     let p = PathBuf::from(inp);
@@ -85,15 +85,9 @@ impl Cli {
             } else {
                 vec![]
             };
-            self.display_and_write_repl_output(&handler)?;
-            for line in lines {
-                println!("> {line}");
-                let _ = rl.add_history_entry(&line);
-                if let Err(e) = handler.execute(line) {
-                    eprintln!("{e}");
-                    break;
-                }
-            }
+            self.restore_repl_session(&mut handler, lines, |line| {
+                let _ = rl.add_history_entry(line);
+            })?;
         }
         rl.set_helper(Some(SqlHelper::new()));
         loop {
@@ -151,6 +145,20 @@ impl Cli {
         Ok(())
     }
 
+    fn restore_repl_session(
+        &self,
+        handler: &mut LineExecutor,
+        lines: impl IntoIterator<Item = String>,
+        mut record_line: impl FnMut(&str),
+    ) -> anyhow::Result<()> {
+        for line in lines {
+            println!("> {line}");
+            record_line(&line);
+            handler.execute(line)?;
+        }
+        self.display_and_write_repl_output(handler)
+    }
+
     fn display_and_write_repl_output(&self, handler: &LineExecutor) -> anyhow::Result<()> {
         let df = handler.frame().clone().collect()?;
         println!("{}", df.inner());
@@ -188,4 +196,42 @@ fn write_repl_output(
     path.set_extension(SQL_EXTENSION);
     let sql_output = stage_repl_sql_output(handler.history().iter(), path)?;
     StagedFile::commit_pair(df_output, sql_output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use polars::prelude::IntoLazy;
+
+    fn handler() -> LineExecutor {
+        let frame = crate::Frame::from_inner(polars::df!("id" => [2_i64, 2]).unwrap().lazy());
+        LineExecutor::new(Executor::from_frame("input", frame))
+    }
+
+    #[test]
+    fn invalid_restored_history_does_not_replace_the_checkpoint() {
+        let output = std::env::temp_dir().join(format!("dfsql-cli-{}.csv", std::process::id()));
+        let mut history = output.clone();
+        history.set_extension(SQL_EXTENSION);
+        std::fs::write(&output, "existing output").unwrap();
+        std::fs::write(&history, "existing history\n").unwrap();
+        let mut handler = handler();
+        let cli = Cli {
+            sql: None,
+            input: vec![],
+            output: Some(output.clone()),
+            lazy: false,
+        };
+        assert!(
+            cli.restore_repl_session(&mut handler, ["select +".to_owned()], |_| {})
+                .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), "existing output");
+        assert_eq!(
+            std::fs::read_to_string(&history).unwrap(),
+            "existing history\n"
+        );
+        std::fs::remove_file(output).unwrap();
+        std::fs::remove_file(history).unwrap();
+    }
 }
