@@ -31,7 +31,7 @@ pub enum ValueType {
 }
 
 impl ValueType {
-    pub(crate) const fn name(self) -> &'static str {
+    pub const fn name(self) -> &'static str {
         match self {
             Self::Bool => "bool",
             Self::UInt => "uint",

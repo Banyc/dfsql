@@ -9,6 +9,7 @@ pub use value::{IntoValue, Value, ValueType};
 pub type MaterializedFrame = Frame;
 
 #[derive(Debug, thiserror::Error, PartialEq)]
+#[non_exhaustive]
 pub enum Error {
     #[error("frame not found: {0}")]
     FrameNotFound(String),

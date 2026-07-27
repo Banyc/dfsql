@@ -8,13 +8,6 @@ use crate::{
     sql,
 };
 
-pub fn write_repl_sql_output<'a>(
-    sql: impl Iterator<Item = &'a String>,
-    path: impl AsRef<Path>,
-) -> anyhow::Result<()> {
-    stage_repl_sql_output(sql, path)?.commit()
-}
-
 pub(crate) fn stage_repl_sql_output<'a>(
     sql: impl Iterator<Item = &'a String>,
     path: impl AsRef<Path>,
@@ -28,7 +21,7 @@ pub(crate) fn stage_repl_sql_output<'a>(
     })
 }
 
-pub fn read_repl_sql_file(path: impl AsRef<Path>) -> anyhow::Result<Vec<String>> {
+pub(crate) fn read_repl_sql_file(path: impl AsRef<Path>) -> anyhow::Result<Vec<String>> {
     let file = std::fs::File::options().read(true).open(&path)?;
     let mut reader = BufReader::new(file);
     let mut lines = vec![];
@@ -46,7 +39,7 @@ pub fn read_repl_sql_file(path: impl AsRef<Path>) -> anyhow::Result<Vec<String>>
     Ok(lines)
 }
 
-pub fn read_sql_file(path: impl AsRef<Path>) -> anyhow::Result<sql::S> {
+pub(crate) fn read_sql_file(path: impl AsRef<Path>) -> anyhow::Result<sql::S> {
     let mut file = std::fs::File::options().read(true).open(&path)?;
     let mut src = String::new();
     file.read_to_string(&mut src)?;

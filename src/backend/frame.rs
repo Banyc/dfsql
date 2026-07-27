@@ -64,8 +64,8 @@ impl DynamicFrame {
         Ok(Self::from_inner(frame))
     }
 
-    pub fn collect(&self) -> Result<dynamic::MaterializedFrame> {
-        Ok(self.inner.clone())
+    pub fn collect(&self) -> Result<crate::backend::DynamicMaterializedFrame> {
+        Ok(crate::backend::DynamicMaterializedFrame::from_inner(self.inner.clone()))
     }
 
     pub(crate) fn from_inner(inner: dynamic::Frame) -> Self {

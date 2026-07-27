@@ -1,5 +1,5 @@
 pub(crate) mod atomic_file;
-pub mod sql_file;
+pub(crate) mod sql_file;
 
 use crate::{Frame, MaterializedFrame};
 use anyhow::{Context, anyhow, bail, ensure};
@@ -48,7 +48,7 @@ impl FileFormat {
     }
 }
 
-pub fn read_df_file(path: impl AsRef<Path>) -> anyhow::Result<Frame> {
+pub(crate) fn read_df_file(path: impl AsRef<Path>) -> anyhow::Result<Frame> {
     let path = path.as_ref();
     match FileFormat::from_path(path)? {
         FileFormat::Csv => Ok(Frame::from_inner(
@@ -78,7 +78,7 @@ pub fn read_df_file(path: impl AsRef<Path>) -> anyhow::Result<Frame> {
     }
 }
 
-pub fn write_df_output(frame: MaterializedFrame, path: impl AsRef<Path>) -> anyhow::Result<()> {
+pub(crate) fn write_df_output(frame: MaterializedFrame, path: impl AsRef<Path>) -> anyhow::Result<()> {
     stage_df_output(frame, path)?.commit()
 }
 
