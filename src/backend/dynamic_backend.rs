@@ -80,14 +80,16 @@ impl Executor {
             .collect();
         let mut executor = dynamic::Executor::new(self.frame_name.clone(), input)
             .expect("the active frame is always present");
-        let result = executor.execute(statements);
+        for statement in &statements.statements {
+            executor.execute_statement(statement)?;
+        }
         self.frame_name = executor.frame_name().to_owned();
         self.input = executor
             .into_input()
             .into_iter()
             .map(|(name, frame)| (name, Frame::from_inner(frame)))
             .collect();
-        result
+        Ok(())
     }
 
     pub(super) fn collect(&self) -> Result<MaterializedFrame, dynamic::Error> {

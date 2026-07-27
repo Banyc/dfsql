@@ -79,9 +79,14 @@ impl Executor {
     }
 
     pub fn execute(&mut self, statements: &crate::sql::S) -> Result<()> {
+        let mut next = Self {
+            frame_name: self.frame_name.clone(),
+            input: self.input.clone(),
+        };
         for statement in &statements.statements {
-            self.execute_statement(statement)?;
+            next.execute_statement(statement)?;
         }
+        *self = next;
         Ok(())
     }
 
@@ -295,11 +300,12 @@ fn build_join_frame(
                 name.push_str("_right");
             }
             names.push(name.clone());
-            columns.push(Column::from_values(
+            columns.push(Column::from_values_with_hint(
                 name,
                 rows.iter()
                     .map(|row| row.map(|row| column.get(row).unwrap()).unwrap_or_default())
                     .collect(),
+                column.value_type(),
             ));
         }
     }

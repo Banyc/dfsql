@@ -203,7 +203,15 @@ impl Column {
     }
 
     pub(crate) fn from_values(name: impl Into<String>, values: Vec<Value>) -> Self {
-        Self::from_data(name, ColumnData::from_values(values))
+        Self::from_values_with_hint(name, values, None)
+    }
+
+    pub(crate) fn from_values_with_hint(
+        name: impl Into<String>,
+        values: Vec<Value>,
+        hint: Option<ValueType>,
+    ) -> Self {
+        Self::from_data(name, ColumnData::from_values_with_hint(values, hint))
     }
 
     pub(crate) fn rename(mut self, name: impl Into<String>) -> Self {

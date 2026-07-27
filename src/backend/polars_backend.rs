@@ -90,14 +90,19 @@ impl Executor {
     }
 
     pub(super) fn execute(&mut self, statements: &sql::S) -> Result<(), Error> {
-        let mut frame = self.frame().inner().clone();
+        let mut next = Self {
+            frame_name: self.frame_name.clone(),
+            input: self.input.clone(),
+        };
+        let mut frame = next.frame().inner().clone();
         for stat in &statements.statements {
-            frame = apply_stat(frame, stat, &mut self.input)?;
+            frame = apply_stat(frame, stat, &mut next.input)?;
             if let sql::stat::Stat::Use(r#use) = stat {
-                self.set_frame_name(r#use.df_name.clone())?;
+                next.set_frame_name(r#use.df_name.clone())?;
             }
-            self.set_frame(super::Frame::from_inner(frame.clone()));
+            next.set_frame(super::Frame::from_inner(frame.clone()));
         }
+        *self = next;
         Ok(())
     }
 
@@ -371,14 +376,14 @@ pub(super) fn frame_from_dynamic(frame: dynamic::Frame) -> std::result::Result<L
                             None => Ok(AnyValue::Null),
                         })
                         .collect::<std::result::Result<Vec<_>, Error>>()?;
-                    Series::from_any_values(name, &values, false)?.into_column()
+                    Series::from_any_values(name, &values, true)?.into_column()
                 }
                 ColumnData::Mixed(values) => {
                     let values = values
                         .into_iter()
                         .map(value_to_any)
                         .collect::<std::result::Result<Vec<_>, Error>>()?;
-                    Series::from_any_values(name, &values, false)?.into_column()
+                    Series::from_any_values(name, &values, true)?.into_column()
                 }
             };
             Ok(column)
@@ -460,7 +465,8 @@ pub(super) fn frame_to_dynamic(frame: &DataFrame) -> std::result::Result<dynamic
             Ok(dynamic::Column::from_data(name, data))
         })
         .collect::<std::result::Result<Vec<_>, Error>>()?;
-    dynamic::Frame::new(columns).map_err(|error| Error::Conversion(error.to_string()))
+    dynamic::Frame::with_height(columns, frame.height())
+        .map_err(|error| Error::Conversion(error.to_string()))
 }
 
 fn value_to_any(value: dynamic::Value) -> std::result::Result<AnyValue<'static>, Error> {
@@ -477,7 +483,7 @@ fn value_to_any(value: dynamic::Value) -> std::result::Result<AnyValue<'static>,
                 .iter()
                 .map(|v| value_to_any(v.clone()))
                 .collect::<std::result::Result<Vec<_>, Error>>()?;
-            AnyValue::List(Series::from_any_values("".into(), &values, false)?)
+            AnyValue::List(Series::from_any_values("".into(), &values, true)?)
         }
     })
 }
