@@ -1,7 +1,10 @@
 pub mod handler;
 pub mod visual;
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use crate::cli::{handler::LineExecutor, visual::SqlHelper};
 use crate::file_ops::{
@@ -39,15 +42,8 @@ impl Cli {
         let mut input = HashMap::new();
         let mut first_input_name = None;
         for inp in &self.input {
-            let (name, path) = inp
-                .split_once('.')
-                .map(|(n, p)| (n.to_owned(), p))
-                .unwrap_or_else(|| {
-                    let p = PathBuf::from(inp);
-                    let name = p.file_stem().and_then(|n| n.to_str()).unwrap_or(inp);
-                    (name.to_owned(), inp)
-                });
-            let df = read_df_file(path)?;
+            let (name, path) = input_name_and_path(inp);
+            let df = read_df_file(&path)?;
             if first_input_name.is_none() {
                 first_input_name = Some(name.clone());
             }
@@ -128,15 +124,15 @@ impl Cli {
                 }
                 continue;
             }
-            if let Err(e) = upgrade_df(line, &mut handler) {
+            let result = if self.lazy {
+                upgrade_df(line, &mut handler)
+            } else {
+                upgrade_df_and_persist(line, &mut handler, |handler| {
+                    self.display_and_write_repl_output(handler)
+                })
+            };
+            if let Err(e) = result {
                 eprintln!("{e}");
-                continue;
-            }
-            if !self.lazy
-                && let Err(e) = self.display_and_write_repl_output(&handler)
-            {
-                eprintln!("{e}");
-                handler.undo().unwrap();
             }
         }
         if self.lazy {
@@ -161,12 +157,24 @@ impl Cli {
 
     fn display_and_write_repl_output(&self, handler: &LineExecutor) -> anyhow::Result<()> {
         let df = handler.frame().clone().collect()?;
-        println!("{}", df.inner());
         if let Some(output) = &self.output {
-            write_repl_output(df, handler, output.clone())?;
+            write_repl_output(df.clone(), handler, output.clone())?;
         }
+        println!("{}", df.inner());
         Ok(())
     }
+}
+
+fn input_name_and_path(input: &str) -> (String, PathBuf) {
+    let (name, path) = input.split_once(',').unwrap_or_else(|| {
+        let path = Path::new(input);
+        let name = path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or(input);
+        (name, input)
+    });
+    (name.to_owned(), path.into())
 }
 
 fn upgrade_df(line: String, handler: &mut LineExecutor) -> anyhow::Result<()> {
@@ -265,5 +273,17 @@ mod tests {
             let actual = handler.frame().clone().collect().unwrap();
             assert!(actual.inner().equals_missing(expected.inner()));
         }
+    }
+
+    #[test]
+    fn input_argument_supports_plain_and_named_paths() {
+        assert_eq!(
+            input_name_and_path("/tmp/input.data.csv"),
+            ("input.data".into(), "/tmp/input.data.csv".into())
+        );
+        assert_eq!(
+            input_name_and_path("other,/tmp/input.data.csv"),
+            ("other".into(), "/tmp/input.data.csv".into())
+        );
     }
 }
