@@ -1,6 +1,10 @@
 use winnow::prelude::*;
 use winnow::stream::AsChar;
 
+fn backtrack() -> winnow::error::ErrMode<winnow::error::ContextError> {
+    winnow::error::ErrMode::Backtrack(winnow::error::ContextError::new())
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Stat(StatKeyword),
@@ -37,9 +41,7 @@ pub fn lexer(input: &mut &str) -> ModalResult<Vec<Token>> {
         let token = token(input)?;
         tokens.push(token);
         if input.len() == start {
-            return Err(winnow::error::ErrMode::Backtrack(
-                winnow::error::ContextError::new(),
-            ));
+            return Err(backtrack());
         }
     }
 }
@@ -55,10 +57,7 @@ fn skip_ws(input: &mut &str) {
 }
 
 fn token(input: &mut &str) -> ModalResult<Token> {
-    let c = input
-        .chars()
-        .next()
-        .ok_or_else(|| winnow::error::ErrMode::Backtrack(winnow::error::ContextError::new()))?;
+    let c = input.chars().next().ok_or_else(backtrack)?;
     match c {
         '(' => {
             *input = &input[1..];
@@ -67,9 +66,7 @@ fn token(input: &mut &str) -> ModalResult<Token> {
             expect_char(input, ')')?;
             Ok(Token::Parens(inner))
         }
-        ')' => Err(winnow::error::ErrMode::Backtrack(
-            winnow::error::ContextError::new(),
-        )),
+        ')' => Err(backtrack()),
         '[' => {
             *input = &input[1..];
             let inner = lexer.parse_next(input)?;
@@ -77,9 +74,7 @@ fn token(input: &mut &str) -> ModalResult<Token> {
             expect_char(input, ']')?;
             Ok(Token::Brackets(inner))
         }
-        ']' => Err(winnow::error::ErrMode::Backtrack(
-            winnow::error::ContextError::new(),
-        )),
+        ']' => Err(backtrack()),
         '"' => parse_string(input).map(|s| Token::Literal(Literal::String(s))),
         '-' => {
             *input = &input[1..];
@@ -87,7 +82,6 @@ fn token(input: &mut &str) -> ModalResult<Token> {
         }
         '0'..='9' => number_literal(input).map(Token::Literal),
         '+' | '*' | '/' | '=' | '!' | '<' | '>' | '&' | '|' | ',' | '%' => {
-            symbol_char(c);
             *input = &input[1..];
             Ok(Token::Symbol(symbol_char(c)))
         }
@@ -95,9 +89,7 @@ fn token(input: &mut &str) -> ModalResult<Token> {
             let ident = parse_ident(input);
             Ok(keyword_or_var(ident))
         }
-        _ => Err(winnow::error::ErrMode::Backtrack(
-            winnow::error::ContextError::new(),
-        )),
+        _ => Err(backtrack()),
     }
 }
 
@@ -124,9 +116,7 @@ fn expect_char(input: &mut &str, expected: char) -> ModalResult<()> {
             *input = &input[expected.len_utf8()..];
             Ok(())
         }
-        _ => Err(winnow::error::ErrMode::Backtrack(
-            winnow::error::ContextError::new(),
-        )),
+        _ => Err(backtrack()),
     }
 }
 
@@ -281,7 +271,7 @@ fn number_literal(input: &mut &str) -> ModalResult<Literal> {
     let mut seen_dot = false;
     let mut len = 0;
     for c in input.chars() {
-        if c.is_dec_digit() {
+        if c.is_ascii_digit() {
             len += c.len_utf8();
         } else if c == '.' && !seen_dot {
             seen_dot = true;
@@ -291,9 +281,7 @@ fn number_literal(input: &mut &str) -> ModalResult<Literal> {
         }
     }
     if len == 0 {
-        return Err(winnow::error::ErrMode::Backtrack(
-            winnow::error::ContextError::new(),
-        ));
+        return Err(backtrack());
     }
     let s = &start[..len];
     *input = &start[len..];
@@ -310,9 +298,7 @@ fn parse_string(input: &mut &str) -> ModalResult<String> {
     loop {
         match input.chars().next() {
             None => {
-                return Err(winnow::error::ErrMode::Backtrack(
-                    winnow::error::ContextError::new(),
-                ));
+                return Err(backtrack());
             }
             Some('"') => {
                 *input = &input[1..];
@@ -322,9 +308,7 @@ fn parse_string(input: &mut &str) -> ModalResult<String> {
                 *input = &input[1..];
                 match input.chars().next() {
                     None => {
-                        return Err(winnow::error::ErrMode::Backtrack(
-                            winnow::error::ContextError::new(),
-                        ));
+                        return Err(backtrack());
                     }
                     Some(c) => {
                         let esc = match c {
@@ -339,22 +323,15 @@ fn parse_string(input: &mut &str) -> ModalResult<String> {
                             'u' => {
                                 *input = &input[1..];
                                 let hex: String = input.chars().take(4).collect();
-                                if hex.len() < 4 {
-                                    return Err(winnow::error::ErrMode::Backtrack(
-                                        winnow::error::ContextError::new(),
-                                    ));
+                                if hex.chars().count() < 4 {
+                                    return Err(backtrack());
                                 }
                                 *input = &input[hex.len()..];
-                                let code = u32::from_str_radix(&hex, 16).map_err(|_| {
-                                    winnow::error::ErrMode::Backtrack(
-                                        winnow::error::ContextError::new(),
-                                    )
-                                })?;
-                                char::from_u32(code).ok_or_else(|| {
-                                    winnow::error::ErrMode::Backtrack(
-                                        winnow::error::ContextError::new(),
-                                    )
-                                })?
+                                let code =
+                                    u32::from_str_radix(&hex, 16).map_err(|_| backtrack())?;
+                                let code = char::from_u32(code).ok_or_else(backtrack)?;
+                                result.push(code);
+                                continue;
                             }
                             _ => {
                                 result.push('\\');
