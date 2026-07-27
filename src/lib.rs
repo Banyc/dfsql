@@ -5,4 +5,4 @@ pub mod cli;
 pub(crate) mod file_ops;
 pub mod sql;
 pub use backend::{Error, Executor, Frame, MaterializedFrame, Result};
-pub use sql::{ParseError, SortOrder, S, parse};
+pub use sql::{ParseError, S, SortOrder, parse};

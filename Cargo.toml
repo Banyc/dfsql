@@ -23,6 +23,7 @@ polars = { version = "0.54.4", features = [
     "dtype-categorical",
     # https://github.com/pola-rs/polars/issues/22733
     "dtype-i128",
+    "json",
 ], optional = true }
 regex = "1"
 rustyline = { version = "18", features = ["derive"], optional = true }
@@ -31,8 +32,8 @@ thiserror = "2"
 [features]
 default = []
 polars-backend = ["dep:polars"]
-file-ops = ["anyhow", "dep:hdv", "polars/json", "polars-backend"]
-cli = ["clap", "fancy-regex", "file-ops", "rustyline"]
+file-ops = ["anyhow", "dep:hdv"]
+cli = ["clap", "fancy-regex", "file-ops", "rustyline", "polars-backend"]
 
 [[bin]]
 name = "dfsql"
