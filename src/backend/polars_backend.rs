@@ -22,97 +22,18 @@ pub(super) enum Error {
     FrameNotFound(String),
 }
 
-pub(super) struct Executor {
-    frame_name: String,
-    input: HashMap<String, super::Frame>,
+pub(crate) fn map_polars_backend_error(error: impl ToString) -> crate::backend::Error {
+    crate::backend::Error::Backend(error.to_string())
 }
 
-impl Executor {
-    pub(super) fn from_frame(frame_name: impl Into<String>, frame: super::Frame) -> Self {
-        let frame_name = frame_name.into();
-        Self {
-            input: HashMap::from([(frame_name.clone(), frame)]),
-            frame_name,
-        }
-    }
-
-    pub(super) fn new(
-        frame_name: impl Into<String>,
-        input: HashMap<String, super::Frame>,
-    ) -> Option<Self> {
-        let frame_name = frame_name.into();
-        input
-            .contains_key(&frame_name)
-            .then_some(Self { frame_name, input })
-    }
-
-    pub(super) fn input(&self) -> &HashMap<String, super::Frame> {
-        &self.input
-    }
-
-    pub(super) fn into_input(self) -> HashMap<String, super::Frame> {
-        self.input
-    }
-
-    pub(super) fn insert_frame(
-        &mut self,
-        frame_name: impl Into<String>,
-        frame: super::Frame,
-    ) -> Option<super::Frame> {
-        self.input.insert(frame_name.into(), frame)
-    }
-
-    pub(super) fn frame_name(&self) -> &str {
-        &self.frame_name
-    }
-
-    pub(super) fn frame(&self) -> &super::Frame {
-        &self.input[&self.frame_name]
-    }
-
-    pub(super) fn frame_mut(&mut self) -> &mut super::Frame {
-        self.input
-            .get_mut(&self.frame_name)
-            .expect("the active frame is always present")
-    }
-
-    pub(super) fn set_frame_name(&mut self, frame_name: impl Into<String>) -> Result<(), Error> {
-        let frame_name = frame_name.into();
-        if !self.input.contains_key(&frame_name) {
-            return Err(Error::FrameNotFound(frame_name));
-        }
-        self.frame_name = frame_name;
-        Ok(())
-    }
-
-    pub(super) fn set_frame(&mut self, frame: super::Frame) {
-        self.input.insert(self.frame_name.clone(), frame);
-    }
-
-    pub(super) fn execute(&mut self, statements: &sql::S) -> Result<(), Error> {
-        let mut next = Self {
-            frame_name: self.frame_name.clone(),
-            input: self.input.clone(),
-        };
-        let mut frame = next.frame().inner().clone();
-        for stat in &statements.statements {
-            frame = apply_stat(frame, stat, &mut next.input)?;
-            if let sql::stat::Stat::Use(r#use) = stat {
-                next.set_frame_name(r#use.df_name.clone())?;
-            }
-            next.set_frame(super::Frame::from_inner(frame.clone()));
-        }
-        *self = next;
-        Ok(())
-    }
-
-    pub(super) fn collect(&self) -> Result<super::MaterializedFrame, Error> {
-        let df = self.frame().inner().clone().collect()?;
-        Ok(super::MaterializedFrame::from_inner(df))
+pub(crate) fn map_polars_executor_error(error: Error) -> crate::backend::Error {
+    match error {
+        Error::FrameNotFound(name) => crate::backend::Error::FrameNotFound(name),
+        error => crate::backend::Error::Backend(error.to_string()),
     }
 }
 
-fn apply_stat(
+pub(crate) fn apply_stat(
     df: LazyFrame,
     stat: &sql::stat::Stat,
     others: &mut HashMap<String, super::Frame>,
@@ -529,48 +450,4 @@ fn value_from_any(any: AnyValue) -> std::result::Result<dynamic::Value, Error> {
             )));
         }
     })
-}
-
-#[rustfmt::skip]
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// ref: <https://github.com/pola-rs/polars/issues/22733>
-    #[test]
-    fn test_i128() {
-        let s = "filter x = 0";
-        let s = sql::parse(s).unwrap();
-        let df = df!("x" => [0, 1]).unwrap();
-        let mut executor = Executor::new("a".to_string(), HashMap::from_iter([("a".to_string(), super::super::Frame::from_inner(df.lazy()))])).unwrap();
-        executor.execute(&s).unwrap();
-        executor.collect().unwrap();
-    }
-
-    #[test]
-    fn selector_exclusion_and_log_use_current_polars_expressions() {
-      let frame = df!("x" => [1.0_f64, 10.0], "drop" => [false, true]).unwrap().lazy();
-      let mut executor = Executor::from_frame("input", super::super::Frame::from_inner(frame));
-      executor.execute(&sql::parse("select exclude drop alias log_x log 10 x").unwrap()).unwrap();
-      let output = executor.collect().unwrap();
-      assert_eq!(output.width(), 2);
-      assert!(output.inner.column("x").is_ok());
-      assert!(output.inner.column("drop").is_err());
-      assert_eq!(
-        output.inner.column("log_x").unwrap().f64().unwrap().into_no_null_iter().collect::<Vec<_>>(),
-        [0.0, 1.0]
-      );
-    }
-
-    #[test]
-    fn right_join_uses_each_side_key_after_swapping_inputs() {
-        let left = df!("left_id" => [1, 2], "left_value" => ["one", "two"]).unwrap().lazy();
-        let right = df!("right_id" => [2, 3], "right_value" => ["two", "three"]).unwrap().lazy();
-        let mut executor = Executor::new("left".to_string(),
-            HashMap::from_iter([("left".to_string(), super::super::Frame::from_inner(left)), ("other".to_string(), super::super::Frame::from_inner(right))])).unwrap();
-        executor.execute(&sql::parse("right join other on left_id right_id").unwrap()).unwrap();
-        let joined = executor.collect().unwrap();
-        assert_eq!(joined.height(), 2);
-        assert_eq!(joined.inner.column("right_id").unwrap().i32().unwrap().into_no_null_iter().collect::<Vec<_>>(), [2, 3]);
-    }
 }

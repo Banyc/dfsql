@@ -101,6 +101,7 @@ fn apply_history(sql: impl Iterator<Item = sql::S>, executor: &mut Executor) -> 
 #[cfg(test)]
 mod tests {
     use polars::prelude::IntoLazy;
+
     use super::*;
 
     #[test]

@@ -1,14 +1,15 @@
-use super::{Frame, MaterializedFrame, dynamic};
+use crate::Error;
+use crate::backend::{DynamicFrame, DynamicMaterializedFrame, dynamic};
 use crate::sql;
 use std::collections::HashMap;
 
-pub(super) struct Executor {
+pub struct Executor {
     frame_name: String,
-    input: HashMap<String, Frame>,
+    input: HashMap<String, DynamicFrame>,
 }
 
 impl Executor {
-    pub(super) fn from_frame(frame_name: impl Into<String>, frame: Frame) -> Self {
+    pub fn from_frame(frame_name: impl Into<String>, frame: DynamicFrame) -> Self {
         let frame_name = frame_name.into();
         Self {
             input: HashMap::from([(frame_name.clone(), frame)]),
@@ -16,9 +17,9 @@ impl Executor {
         }
     }
 
-    pub(super) fn new(
+    pub fn new(
         frame_name: impl Into<String>,
-        input: HashMap<String, Frame>,
+        input: HashMap<String, DynamicFrame>,
     ) -> Option<Self> {
         let frame_name = frame_name.into();
         input
@@ -26,53 +27,50 @@ impl Executor {
             .then_some(Self { frame_name, input })
     }
 
-    pub(super) fn input(&self) -> &HashMap<String, Frame> {
+    pub fn input(&self) -> &HashMap<String, DynamicFrame> {
         &self.input
     }
 
-    pub(super) fn into_input(self) -> HashMap<String, Frame> {
+    pub fn into_input(self) -> HashMap<String, DynamicFrame> {
         self.input
     }
 
-    pub(super) fn insert_frame(
+    pub fn insert_frame(
         &mut self,
         frame_name: impl Into<String>,
-        frame: Frame,
-    ) -> Option<Frame> {
+        frame: DynamicFrame,
+    ) -> Option<DynamicFrame> {
         self.input.insert(frame_name.into(), frame)
     }
 
-    pub(super) fn frame_name(&self) -> &str {
+    pub fn frame_name(&self) -> &str {
         &self.frame_name
     }
 
-    pub(super) fn frame(&self) -> &Frame {
+    pub fn frame(&self) -> &DynamicFrame {
         &self.input[&self.frame_name]
     }
 
-    pub(super) fn frame_mut(&mut self) -> &mut Frame {
+    pub fn frame_mut(&mut self) -> &mut DynamicFrame {
         self.input
             .get_mut(&self.frame_name)
             .expect("the active frame is always present")
     }
 
-    pub(super) fn set_frame_name(
-        &mut self,
-        frame_name: impl Into<String>,
-    ) -> Result<(), dynamic::Error> {
+    pub fn set_frame_name(&mut self, frame_name: impl Into<String>) -> Result<(), Error> {
         let frame_name = frame_name.into();
         if !self.input.contains_key(&frame_name) {
-            return Err(dynamic::Error::FrameNotFound(frame_name));
+            return Err(Error::FrameNotFound(frame_name));
         }
         self.frame_name = frame_name;
         Ok(())
     }
 
-    pub(super) fn set_frame(&mut self, frame: Frame) {
+    pub fn set_frame(&mut self, frame: DynamicFrame) {
         self.input.insert(self.frame_name.clone(), frame);
     }
 
-    pub(super) fn execute(&mut self, statements: &sql::S) -> Result<(), dynamic::Error> {
+    pub fn execute(&mut self, statements: &sql::S) -> Result<(), Error> {
         let input = self
             .input
             .iter()
@@ -81,18 +79,23 @@ impl Executor {
         let mut executor = dynamic::Executor::new(self.frame_name.clone(), input)
             .expect("the active frame is always present");
         for statement in &statements.statements {
-            executor.execute_statement(statement)?;
+            executor.execute_statement(statement).map_err(|e| match e {
+                dynamic::Error::FrameNotFound(name) => Error::FrameNotFound(name),
+                e => Error::Dynamic(e),
+            })?;
         }
         self.frame_name = executor.frame_name().to_owned();
         self.input = executor
             .into_input()
             .into_iter()
-            .map(|(name, frame)| (name, Frame::from_inner(frame)))
+            .map(|(name, frame)| (name, DynamicFrame::from_inner(frame)))
             .collect();
         Ok(())
     }
 
-    pub(super) fn collect(&self) -> Result<MaterializedFrame, dynamic::Error> {
-        Ok(MaterializedFrame::from_inner(self.frame().inner().clone()))
+    pub fn collect(&self) -> Result<DynamicMaterializedFrame, Error> {
+        Ok(DynamicMaterializedFrame::from_inner(
+            self.frame().inner().clone(),
+        ))
     }
 }
