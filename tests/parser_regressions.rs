@@ -51,6 +51,21 @@ fn lexer_accepts_regex_backslash_in_string() {
 }
 
 #[test]
+fn parser_handles_unicode_by_character() {
+    assert_eq!(
+        lex(r#""\u0061" "\u0061b" "\u0061é""#).unwrap(),
+        vec![
+            Token::Literal(Literal::String("a".into())),
+            Token::Literal(Literal::String("ab".into())),
+            Token::Literal(Literal::String("aé".into()))
+        ]
+    );
+    assert!(
+        matches!(parse("select \"é\" Limit"), Err(ParseError::Parser(message)) if message.contains("line 1, column 17"))
+    );
+}
+
+#[test]
 fn parser_accepts_extract_all_after_lexer_classifies_all_as_expression_keyword() {
     let parsed = parse(r#"select extract all "[a-z]+" col text"#).unwrap();
     assert!(matches!(parsed.statements.as_slice(),
@@ -66,5 +81,12 @@ fn parser_accepts_extract_all_after_lexer_classifies_all_as_expression_keyword()
 fn top_level_parser_errors_point_to_the_furthest_token() {
     assert!(
         matches!(parse("select value +"), Err(ParseError::Parser(message)) if message.contains("line 1, column 15") && message.contains("unexpected end of input"))
+    );
+}
+
+#[test]
+fn earlier_top_level_error_precedes_later_nested_error() {
+    assert!(
+        matches!(parse("limit value select (a +)"), Err(ParseError::Parser(message)) if message.contains("line 1, column 7") && message.contains("expected integer"))
     );
 }

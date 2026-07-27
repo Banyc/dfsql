@@ -34,6 +34,23 @@ fn dynamic_executor_collects_the_current_frame() {
     let output: MaterializedFrame = executor.collect().unwrap();
     assert_eq!(output, input);
 }
+#[test]
+fn executor_restore_all_state_after_a_failed_program() {
+    use dfsql::{
+        Executor, Frame,
+        backend::dynamic::{Column, Executor as DynamicExecutor, Frame as DynamicFrame},
+    };
+    let input = DynamicFrame::new(vec![Column::new("id", [1_i64, 2])]).unwrap();
+    let program = sql::parse("Limit 1 clone Leaked use missing").unwrap();
+    let mut dynamic = DynamicExecutor::from_frame("input", input.clone());
+    assert!(dynamic.execute(&program).is_err());
+    assert_eq!(dynamic.frame().height(), 2);
+    assert!(!dynamic.input().contains_key("Leaked"));
+    let mut selected = Executor::from_frame("input", Frame::from_dynamic(input).unwrap());
+    assert!(selected.execute(&program).is_err());
+    assert_eq!(selected.collect().unwrap().height(), 2);
+    assert!(!selected.input().contains_key("Leaked"));
+}
 #[cfg(not(feature = "polars-backend"))]
 #[test]
 fn root_facade_uses_dynamic_backend_without_polars() {
@@ -101,21 +118,35 @@ fn dynamic_backend_remains_available_when_polars_is_selected() {
 }
 #[cfg(feature = "polars-backend")]
 #[test]
-fn polars_boundary_round_trips_crate_owned_frame_types() {
+fn polars_boundary_is_lossless_or_errors() {
     use dfsql::{
         Frame,
-        backend::dynamic::{Column, Value},
+        backend::dynamic::{Column, Frame as DynamicFrame, Value},
     };
-    let expected = dfsql::backend::dynamic::Frame::new(vec![
+    let expected = DynamicFrame::new(vec![
         Column::new("bool", [Some(true), None]),
         Column::new("uint", [Some(1_u64), None]),
         Column::new("int", [Some(-1_i64), None]),
         Column::new("float", [Some(2.5_f64), None]),
         Column::new("string", [Some("one"), None]),
         Column::new("bytes", [Some(vec![1_u8, 2]), None]),
-        Column::new("list", [vec![Value::Int(1), Value::Int(2)], vec![]]),
+        Column::new("List", [vec![Value::Int(1), Value::Int(2)], vec![]]),
     ])
     .unwrap();
+    let actual = Frame::from_dynamic(expected.clone())
+        .unwrap()
+        .collect()
+        .unwrap()
+        .to_dynamic()
+        .unwrap();
+    assert_eq!(actual, expected);
+    let input = DynamicFrame::new(vec![Column::new(
+        "mixed",
+        [Value::UInt(9_007_199_254_740_993), Value::Float(0.5)],
+    )])
+    .unwrap();
+    assert!(Frame::from_dynamic(input).is_err());
+    let expected = DynamicFrame::from_rows(Vec::<String>::new(), vec![vec![], vec![]]).unwrap();
     let actual = Frame::from_dynamic(expected.clone())
         .unwrap()
         .collect()

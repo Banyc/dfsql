@@ -459,6 +459,13 @@ fn null_join_keys_never_match() {
         .execute(&sql::parse("inner join other on id").unwrap())
         .unwrap();
     assert_eq!(executor.frame().height(), 0);
+    assert!(
+        executor
+            .frame()
+            .columns()
+            .iter()
+            .all(|column| matches!(column.data(), ColumnData::Int(_)))
+    );
 }
 
 #[test]
