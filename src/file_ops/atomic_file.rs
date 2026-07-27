@@ -1,6 +1,5 @@
 use anyhow::{Context, anyhow, bail};
 use std::{
-    collections::HashSet,
     fs::{self, File},
     io::{BufWriter, Write},
     path::{Path, PathBuf},
@@ -15,20 +14,11 @@ pub(crate) struct StagedFile {
 
 impl StagedFile {
     pub(crate) fn commit(mut self) -> anyhow::Result<()> {
-        let temporary = self
-            .temporary
-            .take()
-            .expect("a staged file has a temporary path");
-        if let Err(error) = fs::rename(&temporary, &self.target) {
-            self.temporary = Some(temporary);
-            return Err(error)
-                .with_context(|| format!("failed to replace '{}'", self.target.display()));
-        }
-        Ok(())
+        install(&mut self)
     }
 
-    pub(crate) fn commit_pair(first: Self, second: Self) -> anyhow::Result<()> {
-        commit_pair(vec![first, second])
+    pub(crate) fn commit_pair(first: Self, commit_marker: Self) -> anyhow::Result<()> {
+        commit_pair(first, commit_marker)
     }
 }
 
@@ -45,6 +35,14 @@ pub(crate) fn stage_file(
     write: impl FnOnce(&mut BufWriter<File>) -> anyhow::Result<()>,
 ) -> anyhow::Result<StagedFile> {
     let target = target.as_ref();
+    let permissions = match fs::metadata(target) {
+        Ok(metadata) => Some(metadata.permissions()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to inspect output '{}'", target.display()));
+        }
+    };
     let (temporary, file) = create_temporary(target, "tmp")?;
     let staged = StagedFile {
         target: target.to_owned(),
@@ -55,6 +53,17 @@ pub(crate) fn stage_file(
     output
         .flush()
         .with_context(|| format!("failed to flush staged output for '{}'", target.display()))?;
+    if let Some(permissions) = permissions {
+        output
+            .get_ref()
+            .set_permissions(permissions)
+            .with_context(|| {
+                format!(
+                    "failed to preserve permissions for staged output '{}'",
+                    target.display()
+                )
+            })?;
+    }
     output
         .get_ref()
         .sync_all()
@@ -63,41 +72,66 @@ pub(crate) fn stage_file(
     Ok(staged)
 }
 
-fn commit_pair(mut files: Vec<StagedFile>) -> anyhow::Result<()> {
-    let unique_targets = files
-        .iter()
-        .map(|file| file.target.clone())
-        .collect::<HashSet<_>>();
-    if unique_targets.len() != files.len() {
-        bail!("cannot atomically commit the same output path more than once");
-    }
-    let mut backups = Vec::with_capacity(files.len());
-    for file in &files {
-        let backup = backup_existing(&file.target)
-            .map_err(|error| with_rollback(error, &files, &backups, 0))?;
-        backups.push(backup);
-    }
-    for index in 0..files.len() {
-        let temporary = files[index]
-            .temporary
-            .take()
-            .expect("a staged file has a temporary path");
-        if let Err(error) = fs::rename(&temporary, &files[index].target) {
-            files[index].temporary = Some(temporary);
-            let error = anyhow::Error::new(error).context(format!(
-                "failed to replace output '{}'",
-                files[index].target.display()
-            ));
-            return Err(with_rollback(error, &files, &backups, index));
-        }
-    }
-    for backup in backups.into_iter().flatten() {
-        let _ = fs::remove_file(backup);
+fn install(file: &mut StagedFile) -> anyhow::Result<()> {
+    let temporary = file
+        .temporary
+        .take()
+        .expect("a staged file has a temporary path");
+    if let Err(error) = fs::rename(&temporary, &file.target) {
+        file.temporary = Some(temporary);
+        return Err(error)
+            .with_context(|| format!("failed to replace '{}'", file.target.display()));
     }
     Ok(())
 }
 
-fn backup_existing(target: &Path) -> anyhow::Result<Option<PathBuf>> {
+fn commit_pair(mut first: StagedFile, mut commit_marker: StagedFile) -> anyhow::Result<()> {
+    if first.target == commit_marker.target {
+        bail!("cannot atomically commit the same output path more than once");
+    }
+    let backup = copy_existing(&first.target)?;
+    if let Err(error) = install(&mut first) {
+        if let Some(backup) = backup {
+            let _ = fs::remove_file(&backup);
+        }
+        return Err(error);
+    }
+    if let Err(error) = install(&mut commit_marker) {
+        return Err(with_rollback(error, &first.target, backup.as_deref()));
+    }
+    if let Some(backup) = backup {
+        let _ = fs::remove_file(&backup);
+    }
+    Ok(())
+}
+
+fn with_rollback(error: anyhow::Error, target: &Path, backup: Option<&Path>) -> anyhow::Error {
+    match restore_target(target, backup) {
+        Ok(()) => error,
+        Err(rollback_error) => anyhow!("{error:#}; rollback failed: {rollback_error:#}"),
+    }
+}
+
+fn restore_target(target: &Path, backup: Option<&Path>) -> anyhow::Result<()> {
+    if let Some(backup) = backup {
+        fs::rename(backup, target).with_context(|| {
+            format!(
+                "failed to restore backup '{}' to '{}'",
+                backup.display(),
+                target.display()
+            )
+        })
+    } else {
+        match fs::remove_file(target) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error)
+                .with_context(|| format!("failed to remove replacement '{}'", target.display())),
+        }
+    }
+}
+
+fn copy_existing(target: &Path) -> anyhow::Result<Option<PathBuf>> {
     if !target
         .try_exists()
         .with_context(|| format!("failed to inspect output '{}'", target.display()))?
@@ -105,54 +139,9 @@ fn backup_existing(target: &Path) -> anyhow::Result<Option<PathBuf>> {
         return Ok(None);
     }
     let backup = unused_sibling_path(target, "backup")?;
-    fs::rename(target, &backup)
-        .with_context(|| format!("failed to stage existing output '{}'", target.display()))?;
+    fs::copy(target, &backup)
+        .with_context(|| format!("failed to back up existing output '{}'", target.display()))?;
     Ok(Some(backup))
-}
-
-fn with_rollback(
-    error: anyhow::Error,
-    files: &[StagedFile],
-    backups: &[Option<PathBuf>],
-    installed: usize,
-) -> anyhow::Error {
-    match restore_targets(files, backups, installed) {
-        Ok(()) => error,
-        Err(rollback_error) => anyhow!("{error:#}; rollback failed: {rollback_error:#}"),
-    }
-}
-
-fn restore_targets(
-    files: &[StagedFile],
-    backups: &[Option<PathBuf>],
-    installed: usize,
-) -> anyhow::Result<()> {
-    let mut failures = Vec::new();
-    for (index, (file, backup)) in files.iter().zip(backups).enumerate() {
-        if index < installed
-            && let Err(error) = fs::remove_file(&file.target)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            failures.push(format!(
-                "failed to remove replacement '{}': {error}",
-                file.target.display()
-            ));
-        }
-        if let Some(backup) = backup
-            && let Err(error) = fs::rename(backup, &file.target)
-        {
-            failures.push(format!(
-                "failed to restore backup '{}' to '{}': {error}",
-                backup.display(),
-                file.target.display()
-            ));
-        }
-    }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        bail!("{}", failures.join("; "))
-    }
 }
 
 fn create_temporary(target: &Path, kind: &str) -> anyhow::Result<(PathBuf, File)> {
@@ -228,6 +217,27 @@ mod tests {
         fs::remove_file(target).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn replacement_preserves_existing_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let target = path("permissions");
+        fs::write(&target, "original").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+        stage_file(&target, |output| {
+            output.write_all(b"replacement")?;
+            Ok(())
+        })
+        .unwrap()
+        .commit()
+        .unwrap();
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::remove_file(target).unwrap();
+    }
+
     #[test]
     fn pair_commit_replaces_both_outputs() {
         let first_path = path("first");
@@ -252,18 +262,37 @@ mod tests {
     }
 
     #[test]
+    fn failed_pair_commit_keeps_the_previous_checkpoint() {
+        let first_path = path("first");
+        let second_path = path("second");
+        fs::write(&first_path, "old first").unwrap();
+        fs::write(&second_path, "old second").unwrap();
+        let first = stage_file(&first_path, |output| {
+            output.write_all(b"new first")?;
+            Ok(())
+        })
+        .unwrap();
+        let second = stage_file(&second_path, |output| {
+            output.write_all(b"new second")?;
+            Ok(())
+        })
+        .unwrap();
+        fs::remove_file(second.temporary.as_ref().unwrap()).unwrap();
+        assert!(StagedFile::commit_pair(first, second).is_err());
+        assert_eq!(fs::read_to_string(&first_path).unwrap(), "old first");
+        assert_eq!(fs::read_to_string(&second_path).unwrap(), "old second");
+        fs::remove_file(first_path).unwrap();
+        fs::remove_file(second_path).unwrap();
+    }
+
+    #[test]
     fn rollback_failures_are_reported() {
         let target = path("rollback-target");
         let missing_backup = path("missing-backup");
-        let file = StagedFile {
-            target: target.clone(),
-            temporary: None,
-        };
         let error = with_rollback(
             anyhow!("installation failed"),
-            &[file],
-            &[Some(missing_backup.clone())],
-            0,
+            &target,
+            Some(&missing_backup),
         );
         let message = error.to_string();
         assert!(message.contains("installation failed"));
