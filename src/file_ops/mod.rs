@@ -191,41 +191,63 @@ impl<R: Read> Read for CountingReader<R> {
 }
 
 fn read_hdv_text(input: File) -> anyhow::Result<DataFrame> {
-    let input = UnexpectedEofReader(BufReader::new(input));
+    let line_shape = Rc::new(Cell::new((0, false)));
+    let input = UnexpectedEofReader {
+        inner: BufReader::new(input),
+        line_shape: line_shape.clone(),
+    };
     let mut reader = HdvTextRawReader::new(input);
     let mut rows = Vec::new();
     loop {
         match reader.read() {
-            Ok(row) => rows.push(row),
+            Ok(row) => {
+                let (commas, terminated) = line_shape.get();
+                ensure!(
+                    commas == row.atoms().len() && (terminated || row.atoms().is_empty()),
+                    "HDV text row {} has an unexpected number of fields",
+                    rows.len()
+                );
+                rows.push(row);
+            }
             Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => break,
             Err(error) => return Err(error.into()),
         }
     }
-    let Some(header) = reader.header() else {
-        return Ok(DataFrame::empty());
-    };
+    let header = reader
+        .header()
+        .ok_or_else(|| anyhow!("HDV text input has no header"))?;
     frame_from_hdv(header, &rows)
 }
 
-struct UnexpectedEofReader<R>(R);
+struct UnexpectedEofReader<R> {
+    inner: R,
+    line_shape: Rc<Cell<(usize, bool)>>,
+}
 
 impl<R: Read> Read for UnexpectedEofReader<R> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        self.0.read(buffer)
+        self.inner.read(buffer)
     }
 }
 
 impl<R: BufRead> BufRead for UnexpectedEofReader<R> {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
-        self.0.fill_buf()
+        self.inner.fill_buf()
     }
     fn consume(&mut self, amount: usize) {
-        self.0.consume(amount);
+        self.inner.consume(amount);
     }
     fn read_line(&mut self, buffer: &mut String) -> io::Result<usize> {
-        match self.0.read_line(buffer)? {
+        match self.inner.read_line(buffer)? {
             0 => Err(io::ErrorKind::UnexpectedEof.into()),
-            bytes => Ok(bytes),
+            bytes => {
+                let line = buffer.trim_end_matches(['\r', '\n']);
+                self.line_shape.set((
+                    line.bytes().filter(|byte| *byte == b',').count(),
+                    line.ends_with(','),
+                ));
+                Ok(bytes)
+            }
         }
     }
 }
@@ -395,7 +417,8 @@ fn validate_hdv_text(rows: &[ValueRow]) -> anyhow::Result<()> {
             match value {
                 AtomValue::Bytes(_) => bail!("HDV text does not support binary values"),
                 AtomValue::String(value)
-                    if value.contains(',')
+                    if value.is_empty()
+                        || value.contains(',')
                         || value.contains('"')
                         || value.contains('\n')
                         || value.trim_start().len() != value.len() =>
@@ -488,10 +511,12 @@ mod tests {
     }
 
     #[test]
-    fn hdv_binary_rejects_empty_and_truncated_inputs() {
-        let empty = TestPath::new("hdvb");
-        std::fs::write(empty.as_path(), []).unwrap();
-        assert!(read_df_file(empty.as_path()).is_err());
+    fn hdv_rejects_missing_headers_and_truncated_binary() {
+        for extension in ["hdvb", "hdvt"] {
+            let empty = TestPath::new(extension);
+            std::fs::write(empty.as_path(), []).unwrap();
+            assert!(read_df_file(empty.as_path()).is_err());
+        }
         let truncated = TestPath::new("hdvb");
         let frame = MaterializedFrame::from_inner(polars::df!("id" => [1_i64, 2]).unwrap());
         write_df_output(frame, truncated.as_path()).unwrap();
@@ -522,6 +547,28 @@ mod tests {
         );
         let actual = round_trip(&frame, "hdvt");
         assert!(frame.inner().equals_missing(actual.inner()));
+        let frame = MaterializedFrame::from_inner(DataFrame::new(2, Vec::<Column>::new()).unwrap());
+        let actual = round_trip(&frame, "hdvt");
+        assert_eq!((actual.height(), actual.width()), (2, 0));
+    }
+
+    #[test]
+    fn hdv_text_rejects_empty_strings() {
+        let path = TestPath::new("hdvt");
+        let frame = MaterializedFrame::from_inner(polars::df!("value" => [""]).unwrap());
+        assert!(write_df_output(frame, path.as_path()).is_err());
+    }
+
+    #[test]
+    fn hdv_text_rejects_extra_fields() {
+        let path = TestPath::new("hdvt");
+        let frame = MaterializedFrame::from_inner(polars::df!("value" => [1_i64]).unwrap());
+        write_df_output(frame, path.as_path()).unwrap();
+        let contents = std::fs::read_to_string(path.as_path())
+            .unwrap()
+            .replace("1,\n", "1, discarded,\n");
+        std::fs::write(path.as_path(), contents).unwrap();
+        assert!(read_df_file(path.as_path()).is_err());
     }
 
     #[test]
