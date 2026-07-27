@@ -57,11 +57,11 @@ fn render_source_error(source: &str, byte_offset: usize, detail: &str) -> String
         .map(|i| byte_offset + i)
         .unwrap_or(source.len());
     let line_num = source[..byte_offset].matches('\n').count() + 1;
-    let col = byte_offset - line_start + 1;
+    let col = source[line_start..byte_offset].chars().count() + 1;
     let offending_line = &source[line_start..line_end];
     let caret = " ".repeat(col - 1) + "^";
 
-    format!("at line {line_num}, column {col}:\n  {offending_line}\n  {caret}\n{detail}")
+    format!("at line {line_num}, column {col}:\n{offending_line}\n{caret}\n{detail}")
 }
 
 pub fn parse(source: &str) -> Result<S, ParseError> {
@@ -72,9 +72,11 @@ pub fn parse(source: &str) -> Result<S, ParseError> {
             let spans = lexer::token_spans(source, &tokens).map_err(ParseError::Lexer)?;
             let top_level = error.render_source(source, &tokens, &spans, source.len());
             let nested = nested_expression_error(source, &tokens, &spans);
-            Err(ParseError::Parser(
-                nested.map(|(_, message)| message).unwrap_or(top_level),
-            ))
+            let message = match (nested, spans.get(error.offset)) {
+                (Some((offset, message)), Some(span)) if span.range.contains(&offset) => message,
+                _ => top_level,
+            };
+            Err(ParseError::Parser(message))
         }
     }
 }
