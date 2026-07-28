@@ -283,7 +283,8 @@ pub(super) fn frame_from_dynamic(frame: dynamic::Frame) -> std::result::Result<L
                             })
                         })
                         .collect::<Vec<_>>();
-                    Series::from_any_values(name, &values, true)?.into_column()
+                    Series::from_any_values_and_dtype(name, &values, &DataType::String, true)?
+                        .into_column()
                 }
                 ColumnData::Bytes(values) => {
                     let values = values.iter().map(Option::as_deref).collect::<Vec<_>>();
@@ -297,7 +298,17 @@ pub(super) fn frame_from_dynamic(frame: dynamic::Frame) -> std::result::Result<L
                             None => Ok(AnyValue::Null),
                         })
                         .collect::<std::result::Result<Vec<_>, Error>>()?;
-                    Series::from_any_values(name, &values, true)?.into_column()
+                    if values.iter().all(AnyValue::is_null) {
+                        Series::from_any_values_and_dtype(
+                            name,
+                            &values,
+                            &DataType::List(Box::new(DataType::Null)),
+                            true,
+                        )?
+                        .into_column()
+                    } else {
+                        Series::from_any_values(name, &values, true)?.into_column()
+                    }
                 }
                 ColumnData::Mixed(values) => {
                     let values = values

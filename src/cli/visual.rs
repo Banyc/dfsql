@@ -1,10 +1,9 @@
-use std::{borrow::Cow, collections::HashSet};
+use std::{collections::HashSet, fmt::Write};
 
 use crate::sql::lexer::{
     CONDITIONAL_KEYWORDS, EXPR_KEYWORDS, LITERAL_KEYWORDS, STAT_KEYWORDS, STRING_KEYWORDS,
     TYPE_KEYWORDS,
 };
-use fancy_regex::Regex;
 use rustyline::{Completer, Helper, Hinter, Validator, highlight::Highlighter};
 
 #[derive(Debug, Helper, Completer, Hinter, Validator)]
@@ -89,33 +88,76 @@ const fn color_type() -> TerminalColor {
 
 #[derive(Debug)]
 pub struct TerminalKeywordHighlighter {
-    rules: Vec<(KeywordColor, Regex)>,
+    rules: Vec<KeywordColor>,
 }
 impl TerminalKeywordHighlighter {
     pub fn new(keyword_color_pairs: impl Iterator<Item = KeywordColor>) -> Self {
         let rules = keyword_color_pairs
-            .map(|pair| {
-                let keyword = regex::escape(&pair.keyword);
-                let pattern = format!(r"(?<=\s|^|\(|\))({})(?=\s|$|\(|\)|\+|/)", keyword);
-                let regex = Regex::new(&pattern).unwrap();
-                (pair, regex)
-            })
+            .filter(|pair| !pair.keyword.is_empty())
             .collect();
         Self { rules }
     }
 
     pub fn replace(&self, string: &str) -> String {
-        let mut string: Cow<str> = string.into();
-        for (pair, regex) in &self.rules {
-            let replacer = format!(
-                "\x1b[1;{color}m{keyword}\x1b[0m",
-                color = pair.color.code(),
-                keyword = "$1"
-            );
-            string = regex.replace_all(&string, replacer).to_string().into();
+        let mut output = String::with_capacity(string.len());
+        let mut offset = 0;
+        let mut quoted = false;
+        let mut escaped = false;
+        while let Some(character) = string[offset..].chars().next() {
+            if quoted {
+                output.push(character);
+                offset += character.len_utf8();
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == '"' {
+                    quoted = false;
+                }
+            } else if character == '"' {
+                quoted = true;
+                output.push(character);
+                offset += 1;
+            } else if let Some((rule, matched)) = self
+                .rules
+                .iter()
+                .find_map(|rule| match_rule(string, offset, rule).map(|matched| (rule, matched)))
+            {
+                write!(output, "\x1b[1;{}m{}\x1b[0m", rule.color.code(), matched).unwrap();
+                offset += matched.len();
+            } else {
+                output.push(character);
+                offset += character.len_utf8();
+            }
         }
-        string.into()
+        output
     }
+}
+
+fn match_rule<'a>(input: &'a str, offset: usize, rule: &KeywordColor) -> Option<&'a str> {
+    let end = offset.checked_add(rule.keyword.len())?;
+    let matched = input.get(offset..end)?;
+    if !matched.eq_ignore_ascii_case(&rule.keyword)
+        || !identifier_boundary(
+            input[..offset].chars().next_back(),
+            rule.keyword.chars().next(),
+        )
+        || !identifier_boundary(
+            input[end..].chars().next(),
+            rule.keyword.chars().next_back(),
+        )
+    {
+        return None;
+    }
+    Some(matched)
+}
+
+fn identifier_boundary(neighbor: Option<char>, edge: Option<char>) -> bool {
+    !edge.is_some_and(identifier_char) || !neighbor.is_some_and(identifier_char)
+}
+
+fn identifier_char(character: char) -> bool {
+    character.is_alphanumeric() || character == '_'
 }
 
 #[derive(Debug)]
@@ -124,7 +166,7 @@ pub struct KeywordColor {
     pub color: TerminalColor,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum TerminalColor {
     Green,
     Yellow,
@@ -154,6 +196,12 @@ mod tests {
     }
 
     #[test]
+    fn highlighter_follows_lexer_boundaries_and_strings() {
+        let helper = SqlHelper::new();
+        assert_eq!(helper.highlight(r#"SELECT,sum*value "(select)" selected"#, 0), "\x1b[1;34mSELECT\x1b[0m,\x1b[1;33msum\x1b[0m*value \"(select)\" selected");
+    }
+
+    #[test]
     fn sql_helper_uses_the_lexer_keyword_inventory() {
         let helper = SqlHelper::new();
         for keyword in STAT_KEYWORDS.iter().map(|(keyword, _)| *keyword)
@@ -164,6 +212,8 @@ mod tests {
             .chain(TYPE_KEYWORDS.iter().map(|(keyword, _)| *keyword))
         {
             assert_ne!(helper.highlight(keyword, 0), keyword, "{keyword} was not highlighted");
+            let uppercase = keyword.to_ascii_uppercase();
+            assert_ne!(helper.highlight(&uppercase, 0), uppercase, "{} was not highlighted", uppercase);
         }
         assert_eq!(helper.highlight("describe", 0), "describe");
     }

@@ -1,12 +1,19 @@
-use crate::{Frame, MaterializedFrame};
-use anyhow::{Context, anyhow, bail};
-use polars::prelude::*;
-use std::{fs::File, io::BufWriter, path::Path};
-
-use super::atomic_file::{StagedFile, stage_file};
+use super::atomic_file::StagedFile;
+#[cfg(feature = "polars-backend")]
+use super::atomic_file::stage_file;
+#[cfg(feature = "polars-backend")]
 use super::hdv_file;
+use crate::{Frame, MaterializedFrame};
+#[cfg(feature = "polars-backend")]
+use anyhow::Context;
+use anyhow::{anyhow, bail};
+#[cfg(feature = "polars-backend")]
+use polars::prelude::*;
+use std::path::Path;
+#[cfg(feature = "polars-backend")]
+use std::{fs::File, io::BufWriter};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(super) enum FileFormat {
     Csv,
     Json,
@@ -37,9 +44,13 @@ impl FileFormat {
     }
 }
 
-pub(crate) fn read_df_file(path: impl AsRef<Path>) -> anyhow::Result<Frame> {
+pub fn read_df_file(path: impl AsRef<Path>) -> anyhow::Result<Frame> {
     let path = path.as_ref();
-    match FileFormat::from_path(path)? {
+    let format = FileFormat::from_path(path)?;
+    #[cfg(not(feature = "polars-backend"))]
+    panic!("{format:?} file operations require the 'polars-backend' feature");
+    #[cfg(feature = "polars-backend")]
+    match format {
         FileFormat::Csv => read_csv(path),
         FileFormat::Json => read_json(path),
         FileFormat::JsonLines => read_json_lines(path),
@@ -48,19 +59,24 @@ pub(crate) fn read_df_file(path: impl AsRef<Path>) -> anyhow::Result<Frame> {
     }
 }
 
-pub(crate) fn write_df_output(
-    frame: MaterializedFrame,
-    path: impl AsRef<Path>,
-) -> anyhow::Result<()> {
+pub fn write_df_output(frame: MaterializedFrame, path: impl AsRef<Path>) -> anyhow::Result<()> {
     stage_df_output(frame, path)?.commit()
 }
 
 pub(crate) fn stage_df_output(
-    mut frame: MaterializedFrame,
+    frame: MaterializedFrame,
     path: impl AsRef<Path>,
 ) -> anyhow::Result<StagedFile> {
     let path = path.as_ref();
     let format = FileFormat::from_path(path)?;
+    #[cfg(not(feature = "polars-backend"))]
+    {
+        let _ = frame;
+        panic!("{format:?} file operations require the 'polars-backend' feature");
+    }
+    #[cfg(feature = "polars-backend")]
+    let mut frame = frame;
+    #[cfg(feature = "polars-backend")]
     stage_file(path, move |output| match format {
         FileFormat::Csv => write_csv(&mut frame, output),
         FileFormat::Json => write_json(&mut frame, output),
@@ -70,6 +86,7 @@ pub(crate) fn stage_df_output(
     })
 }
 
+#[cfg(feature = "polars-backend")]
 fn open_input(path: &Path) -> anyhow::Result<File> {
     File::open(path).with_context(|| format!("failed to open '{}'", path.display()))
 }
@@ -86,20 +103,10 @@ fn read_csv(path: &Path) -> anyhow::Result<Frame> {
     ))
 }
 
-#[cfg(not(feature = "polars-backend"))]
-fn read_csv(_path: &Path) -> anyhow::Result<Frame> {
-    panic!("csv reading requires the 'polars-backend' feature")
-}
-
 #[cfg(feature = "polars-backend")]
 fn write_csv(frame: &mut MaterializedFrame, output: &mut BufWriter<File>) -> anyhow::Result<()> {
     CsvWriter::new(output).finish(frame.inner_mut())?;
     Ok(())
-}
-
-#[cfg(not(feature = "polars-backend"))]
-fn write_csv(_frame: &mut MaterializedFrame, _output: &mut BufWriter<File>) -> anyhow::Result<()> {
-    panic!("csv writing requires the 'polars-backend' feature")
 }
 
 // ---- JSON ----
@@ -114,22 +121,12 @@ fn read_json(path: &Path) -> anyhow::Result<Frame> {
     ))
 }
 
-#[cfg(not(feature = "polars-backend"))]
-fn read_json(_path: &Path) -> anyhow::Result<Frame> {
-    panic!("json reading requires the 'polars-backend' feature")
-}
-
 #[cfg(feature = "polars-backend")]
 fn write_json(frame: &mut MaterializedFrame, output: &mut BufWriter<File>) -> anyhow::Result<()> {
     JsonWriter::new(output)
         .with_json_format(JsonFormat::Json)
         .finish(frame.inner_mut())?;
     Ok(())
-}
-
-#[cfg(not(feature = "polars-backend"))]
-fn write_json(_frame: &mut MaterializedFrame, _output: &mut BufWriter<File>) -> anyhow::Result<()> {
-    panic!("json writing requires the 'polars-backend' feature")
 }
 
 // ---- JSON Lines ----
@@ -143,11 +140,6 @@ fn read_json_lines(path: &Path) -> anyhow::Result<Frame> {
     ))
 }
 
-#[cfg(not(feature = "polars-backend"))]
-fn read_json_lines(_path: &Path) -> anyhow::Result<Frame> {
-    panic!("json-lines reading requires the 'polars-backend' feature")
-}
-
 #[cfg(feature = "polars-backend")]
 fn write_json_lines(
     frame: &mut MaterializedFrame,
@@ -159,29 +151,23 @@ fn write_json_lines(
     Ok(())
 }
 
-#[cfg(not(feature = "polars-backend"))]
-fn write_json_lines(
-    _frame: &mut MaterializedFrame,
-    _output: &mut BufWriter<File>,
-) -> anyhow::Result<()> {
-    panic!("json-lines writing requires the 'polars-backend' feature")
-}
-
 // ---- HDV ----
 
+#[cfg(feature = "polars-backend")]
 fn read_hdv_binary(path: &Path) -> anyhow::Result<Frame> {
     Ok(Frame::from_inner(
         hdv_file::read_hdv_binary(open_input(path)?)?.lazy(),
     ))
 }
 
+#[cfg(feature = "polars-backend")]
 fn read_hdv_text(path: &Path) -> anyhow::Result<Frame> {
     Ok(Frame::from_inner(
         hdv_file::read_hdv_text(open_input(path)?)?.lazy(),
     ))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "polars-backend"))]
 mod tests {
     use super::*;
     use std::{
@@ -243,4 +229,11 @@ mod tests {
         assert!(write_df_output(frame, path.as_path()).is_err());
         assert_eq!(std::fs::read_to_string(path.as_path()).unwrap(), "keep");
     }
+}
+
+#[cfg(all(test, not(feature = "polars-backend")))]
+#[test]
+#[should_panic(expected = "file operations require the 'polars-backend' feature")]
+fn recognized_format_panics_without_polars_backend() {
+    let _ = read_df_file("input.csv");
 }

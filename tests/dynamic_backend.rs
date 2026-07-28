@@ -45,6 +45,48 @@ fn columns_store_homogeneous_values_in_typed_vectors() {
 }
 
 #[test]
+fn operations_preserve_known_types_without_non_null_values() {
+    for values in [
+        ColumnData::Int(Vec::new()),
+        ColumnData::Int(vec![None, None]),
+    ] {
+        let frame = Frame::new(vec![Column::from_data("value", values)]).unwrap();
+        let output = run(
+            frame.clone(),
+            "select alias negated -value alias compared value = 1",
+        )
+        .unwrap();
+        assert!(matches!(
+            output.column("negated").unwrap().data(),
+            ColumnData::Int(_)
+        ));
+        assert!(matches!(
+            output.column("compared").unwrap().data(),
+            ColumnData::Bool(_)
+        ));
+        let distinct = run(frame, "select alias distinct unique value").unwrap();
+        assert!(matches!(
+            distinct.column("distinct").unwrap().data(),
+            ColumnData::Int(_)
+        ));
+    }
+    let frame = Frame::new(vec![
+        Column::new("key", Vec::<String>::new()),
+        Column::new("value", Vec::<i64>::new()),
+    ])
+    .unwrap();
+    let output = run(frame, "group key agg alias total sum value").unwrap();
+    assert!(matches!(
+        output.column("key").unwrap().data(),
+        ColumnData::String(_)
+    ));
+    assert!(matches!(
+        output.column("total").unwrap().data(),
+        ColumnData::Int(_)
+    ));
+}
+
+#[test]
 fn frames_validate_shape_and_names() {
     assert!(matches!(
         Frame::new(vec![

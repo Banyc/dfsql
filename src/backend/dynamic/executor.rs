@@ -188,17 +188,20 @@ fn group_aggregate(frame: &Frame, group_by: &[String], expressions: &[Expr]) -> 
         .iter()
         .enumerate()
         .map(|(index, name)| {
-            Column::from_values(
+            Column::from_values_with_hint(
                 name,
                 groups.iter().map(|(key, _)| key[index].clone()).collect(),
+                keys[index].value_type(),
             )
         })
         .collect::<Vec<_>>();
     for expression in &expressions {
+        let mut value_type = None;
         let values = groups
             .iter()
             .map(|(_, rows)| {
                 let result = evaluate_shaped(&frame.take(rows), expression)?;
+                value_type = value_type.or(result.column.value_type());
                 Ok(if result.shape == Shape::Scalar {
                     result
                         .column
@@ -211,7 +214,14 @@ fn group_aggregate(frame: &Frame, group_by: &[String], expressions: &[Expr]) -> 
                 })
             })
             .collect::<Result<_>>()?;
-        output.push(Column::from_values(expression_name(expression), values));
+        if groups.is_empty() {
+            value_type = evaluate_shaped(frame, expression)?.column.value_type();
+        }
+        output.push(Column::from_values_with_hint(
+            expression_name(expression),
+            values,
+            value_type,
+        ));
     }
     Frame::with_height(output, groups.len())
 }

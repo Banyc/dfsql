@@ -1,4 +1,12 @@
 use dfsql::sql;
+#[cfg(feature = "file-ops")]
+#[test]
+fn file_ops_are_public_without_exposing_backend_types() {
+    assert!(dfsql::file_ops::read_df_file("input.unsupported").is_err());
+    let _write = |frame: dfsql::MaterializedFrame| {
+        dfsql::file_ops::write_df_output(frame, "output.unsupported")
+    };
+}
 #[test]
 fn dynamic_columns_use_typed_data() {
     use dfsql::backend::dynamic::{Column, ColumnData, Value};
@@ -33,6 +41,31 @@ fn dynamic_executor_collects_the_current_frame() {
     let executor = Executor::from_frame("table", input.clone());
     let output: MaterializedFrame = executor.collect().unwrap();
     assert_eq!(output, input);
+}
+#[test]
+fn unary_operators_bind_before_binary_operators() {
+    use dfsql::{
+        Executor, Frame,
+        backend::dynamic::{Column, Value},
+    };
+    let mut executor = Executor::from_frame(
+        "table",
+        Frame::new(vec![Column::new("input", [0_i64])]).unwrap(),
+    );
+    executor
+        .execute(&sql::parse("select alias result -1 - 2").unwrap())
+        .unwrap();
+    assert_eq!(
+        executor
+            .collect()
+            .unwrap()
+            .to_dynamic()
+            .unwrap()
+            .column("result")
+            .unwrap()
+            .values(),
+        [Value::Int(-3)]
+    );
 }
 #[test]
 fn executor_restore_all_state_after_a_failed_program() {
@@ -140,6 +173,26 @@ fn polars_boundary_is_lossless_or_errors() {
         .to_dynamic()
         .unwrap();
     assert_eq!(actual, expected);
+    for expected in [
+        DynamicFrame::new(vec![
+            Column::new("string", Vec::<String>::new()),
+            Column::new("list", Vec::<Vec<Value>>::new()),
+        ])
+        .unwrap(),
+        DynamicFrame::new(vec![
+            Column::new("string", [None::<String>, None]),
+            Column::new("list", [None::<Vec<Value>>, None]),
+        ])
+        .unwrap(),
+    ] {
+        let actual = Frame::from_dynamic(expected.clone())
+            .unwrap()
+            .collect()
+            .unwrap()
+            .to_dynamic()
+            .unwrap();
+        assert_eq!(actual, expected);
+    }
     let input = DynamicFrame::new(vec![Column::new(
         "mixed",
         [Value::UInt(9_007_199_254_740_993), Value::Float(0.5)],

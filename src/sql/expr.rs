@@ -548,7 +548,7 @@ fn unary_expr(input: &mut Tokens<'_>) -> Result<UnaryExpr, String> {
         }
         _ => return Err("expected unary operator".to_string()),
     };
-    let e = expr(input)?;
+    let e = atom(input)?;
     Ok(UnaryExpr {
         operator: op,
         expr: e,

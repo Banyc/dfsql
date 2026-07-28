@@ -33,9 +33,7 @@ command-line application that uses Polars.
 
 ## File formats
 
-The `cli` feature reads and writes CSV (`.csv`),
-JSON arrays (`.json`), JSON Lines (`.jsonl` or `.ndjson`), HDV binary (`.hdvb`),
-and HDV text (`.hdvt`) files via `dfsql::file_ops`.
+The `file-ops` feature reads and writes CSV (`.csv`), JSON arrays (`.json`), JSON Lines (`.jsonl` or `.ndjson`), HDV binary (`.hdvb`), and HDV text (`.hdvt`) files via `dfsql::file_ops`. Actual format handling requires `polars-backend`; recognized formats panic without it. The `cli` feature includes both features.
 
 HDV conversion uses the core `hdv` crate without its Polars feature. The
 Polars conversion lives in dfsql, so upgrading Polars does not require a

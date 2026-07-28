@@ -466,7 +466,13 @@ impl Value {
             (Self::Bool(left), Self::Bool(right)) => left == right,
             (Self::String(left), Self::String(right)) => left == right,
             (Self::Bytes(left), Self::Bytes(right)) => left == right,
-            (Self::List(left), Self::List(right)) => left == right,
+            (Self::List(left), Self::List(right)) => {
+                left.len() == right.len()
+                    && left
+                        .iter()
+                        .zip(right.iter())
+                        .all(|(left, right)| left.equal(right))
+            }
             (left, right) => match (left.number("equality"), right.number("equality")) {
                 (Ok(Some(left)), Ok(Some(right))) => left.equal(right),
                 _ => false,
@@ -579,6 +585,14 @@ mod tests {
         assert_eq!(k1, k2);
         assert_eq!(k2, k3);
         assert_eq!(k1, k3);
+    }
+
+    #[test]
+    fn list_equality_matches_key_normalization() {
+        let left = Value::List(vec![Value::UInt(42)].into());
+        let right = Value::List(vec![Value::Int(42)].into());
+        assert!(left.equal(&right));
+        assert_eq!(left.key(), right.key());
     }
 
     #[test]

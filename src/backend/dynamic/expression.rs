@@ -9,7 +9,7 @@ use crate::sql::expr::{
 use crate::sql::lexer::{Literal, Type};
 
 use super::value::Number;
-use super::{Column, Error, Frame, Result, Value};
+use super::{Column, Error, Frame, Result, Value, ValueType};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Shape {
@@ -345,13 +345,52 @@ fn combined_len<'a>(
 
 fn apply_binary(operator: BinaryOperator, left: Evaluated, right: Evaluated) -> Result<Evaluated> {
     let name = left.column.name().to_owned();
-    zip_evaluated(name, left, right, |left, right| {
+    let value_type = binary_value_type(
+        operator,
+        left.column.value_type(),
+        right.column.value_type(),
+    );
+    zip_evaluated(name, value_type, left, right, |left, right| {
         binary_value(operator, left, right)
     })
 }
 
+fn binary_value_type(
+    operator: BinaryOperator,
+    left: Option<ValueType>,
+    right: Option<ValueType>,
+) -> Option<ValueType> {
+    match operator {
+        BinaryOperator::Eq
+        | BinaryOperator::NotEq
+        | BinaryOperator::Lt
+        | BinaryOperator::LtEq
+        | BinaryOperator::Gt
+        | BinaryOperator::GtEq
+        | BinaryOperator::And
+        | BinaryOperator::Or => Some(ValueType::Bool),
+        BinaryOperator::Add
+        | BinaryOperator::Sub
+        | BinaryOperator::Mul
+        | BinaryOperator::Div
+        | BinaryOperator::Modulo
+        | BinaryOperator::Pow => {
+            if left == Some(ValueType::Float) || right == Some(ValueType::Float) {
+                Some(ValueType::Float)
+            } else if left == Some(ValueType::Int) || right == Some(ValueType::Int) {
+                Some(ValueType::Int)
+            } else if left == Some(ValueType::UInt) || right == Some(ValueType::UInt) {
+                Some(ValueType::UInt)
+            } else {
+                None
+            }
+        }
+    }
+}
+
 fn zip_evaluated(
     name: impl Into<String>,
+    value_type: Option<ValueType>,
     left: Evaluated,
     right: Evaluated,
     mut function: impl FnMut(&Value, &Value) -> Result<Value>,
@@ -366,7 +405,7 @@ fn zip_evaluated(
         })
         .collect::<Result<_>>()?;
     Ok(Evaluated {
-        column: Column::from_values(name, values),
+        column: Column::from_values_with_hint(name, values, value_type),
         shape: left.shape.merge(right.shape),
     })
 }
@@ -551,9 +590,14 @@ fn apply_unary(operator: UnaryOperator, column: Column) -> Result<Column> {
         UnaryOperator::Unique => unique(column),
         UnaryOperator::Reverse => {
             let name = column.name().to_owned();
-            Ok(Column::from_values(name, column.iter().rev().collect()))
+            let value_type = column.value_type();
+            Ok(Column::from_values_with_hint(
+                name,
+                column.iter().rev().collect(),
+                value_type,
+            ))
         }
-        UnaryOperator::Sqrt => map_column(column, |val| {
+        UnaryOperator::Sqrt => map_column(column, Some(ValueType::Float), |val| {
             Ok(Value::Float(
                 val.number("sqrt")?
                     .expect("null handled by map")
@@ -561,20 +605,35 @@ fn apply_unary(operator: UnaryOperator, column: Column) -> Result<Column> {
                     .sqrt(),
             ))
         }),
-        UnaryOperator::Abs => map_column(column, absolute),
-        UnaryOperator::Neg => map_column(column, negate),
-        UnaryOperator::Not => map_column(column, |val| {
+        UnaryOperator::Abs => {
+            let value_type = column.value_type();
+            map_column(column, value_type, absolute)
+        }
+        UnaryOperator::Neg => {
+            let value_type = match column.value_type() {
+                Some(ValueType::UInt | ValueType::Int) => Some(ValueType::Int),
+                value_type => value_type,
+            };
+            map_column(column, value_type, negate)
+        }
+        UnaryOperator::Not => map_column(column, Some(ValueType::Bool), |val| {
             Ok(Value::Bool(!val.bool("not")?.expect("null handled by map")))
         }),
-        UnaryOperator::IsNull => map_all(column, |val| Ok(Value::Bool(matches!(val, Value::Null)))),
-        UnaryOperator::IsNan => map_all(column, |val| {
+        UnaryOperator::IsNull => map_all(column, Some(ValueType::Bool), |val| {
+            Ok(Value::Bool(matches!(val, Value::Null)))
+        }),
+        UnaryOperator::IsNan => map_all(column, Some(ValueType::Bool), |val| {
             Ok(Value::Bool(matches!(val, Value::Float(v) if v.is_nan())))
         }),
     }
 }
 
-fn map_column(column: Column, mut function: impl FnMut(&Value) -> Result<Value>) -> Result<Column> {
-    map_all(column, |val| {
+fn map_column(
+    column: Column,
+    value_type: Option<ValueType>,
+    mut function: impl FnMut(&Value) -> Result<Value>,
+) -> Result<Column> {
+    map_all(column, value_type, |val| {
         if matches!(val, Value::Null) {
             Ok(Value::Null)
         } else {
@@ -583,14 +642,19 @@ fn map_column(column: Column, mut function: impl FnMut(&Value) -> Result<Value>)
     })
 }
 
-fn map_all(column: Column, mut function: impl FnMut(&Value) -> Result<Value>) -> Result<Column> {
+fn map_all(
+    column: Column,
+    value_type: Option<ValueType>,
+    mut function: impl FnMut(&Value) -> Result<Value>,
+) -> Result<Column> {
     let name = column.name().to_owned();
-    Ok(Column::from_values(
+    Ok(Column::from_values_with_hint(
         name,
         column
             .iter()
             .map(|val| function(&val))
             .collect::<Result<_>>()?,
+        value_type,
     ))
 }
 
@@ -632,6 +696,7 @@ fn negate(value: &Value) -> Result<Value> {
 
 fn reduce_sum(column: Column) -> Result<Column> {
     let name = column.name().to_owned();
+    let value_type = column.value_type();
     let value = column
         .iter()
         .filter(|val| !matches!(val, Value::Null))
@@ -641,10 +706,11 @@ fn reduce_sum(column: Column) -> Result<Column> {
             })
         })?
         .unwrap_or_default();
-    Ok(Column::from_values(name, vec![value]))
+    Ok(Column::from_values_with_hint(name, vec![value], value_type))
 }
 
 fn reduce_edge(column: Column, last: bool) -> Result<Column> {
+    let value_type = column.value_type();
     let mut values = column.iter().filter(|val| !matches!(val, Value::Null));
     let value = if last {
         values.next_back()
@@ -652,7 +718,11 @@ fn reduce_edge(column: Column, last: bool) -> Result<Column> {
         values.next()
     }
     .unwrap_or_default();
-    Ok(Column::from_values(column.name(), vec![value]))
+    Ok(Column::from_values_with_hint(
+        column.name(),
+        vec![value],
+        value_type,
+    ))
 }
 
 fn numbers(column: &Column, operation: &'static str) -> Result<Vec<f64>> {
@@ -675,7 +745,11 @@ fn reduce_mean(column: Column) -> Result<Column> {
     } else {
         Value::Float(values.iter().sum::<f64>() / values.len() as f64)
     };
-    Ok(Column::from_values(column.name(), vec![value]))
+    Ok(Column::from_values_with_hint(
+        column.name(),
+        vec![value],
+        Some(ValueType::Float),
+    ))
 }
 
 fn reduce_median(column: Column) -> Result<Column> {
@@ -686,10 +760,15 @@ fn reduce_median(column: Column) -> Result<Column> {
         len if len % 2 == 1 => Value::Float(values[len / 2]),
         len => Value::Float((values[len / 2 - 1] + values[len / 2]) / 2.0),
     };
-    Ok(Column::from_values(column.name(), vec![value]))
+    Ok(Column::from_values_with_hint(
+        column.name(),
+        vec![value],
+        Some(ValueType::Float),
+    ))
 }
 
 fn reduce_extreme(column: Column, minimum: bool) -> Result<Column> {
+    let value_type = column.value_type();
     let mut result: Option<Value> = None;
     for value in column.iter().filter(|value| !matches!(value, Value::Null)) {
         let replace = match &result {
@@ -704,12 +783,13 @@ fn reduce_extreme(column: Column, minimum: bool) -> Result<Column> {
             }
         };
         if replace {
-            result = Some(value);
+            result = Some(value.clone());
         }
     }
-    Ok(Column::from_values(
+    Ok(Column::from_values_with_hint(
         column.name(),
         vec![result.unwrap_or_default()],
+        value_type,
     ))
 }
 
@@ -719,18 +799,19 @@ fn reduce_variance(column: Column, standard_deviation: bool) -> Result<Column> {
         Value::Null
     } else {
         let mean = values.iter().sum::<f64>() / values.len() as f64;
-        let variance = values
-            .iter()
-            .map(|value| (value - mean).powi(2))
-            .sum::<f64>()
-            / (values.len() - 1) as f64;
+        let variance =
+            values.iter().map(|val| (val - mean).powi(2)).sum::<f64>() / (values.len() - 1) as f64;
         Value::Float(if standard_deviation {
             variance.sqrt()
         } else {
             variance
         })
     };
-    Ok(Column::from_values(column.name(), vec![value]))
+    Ok(Column::from_values_with_hint(
+        column.name(),
+        vec![value],
+        Some(ValueType::Float),
+    ))
 }
 
 fn reduce_bool(column: Column, all: bool) -> Result<Column> {
@@ -748,10 +829,12 @@ fn reduce_bool(column: Column, all: bool) -> Result<Column> {
 
 fn unique(column: Column) -> Result<Column> {
     let name = column.name().to_owned();
+    let value_type = column.value_type();
     let mut seen = HashSet::new();
-    Ok(Column::from_values(
+    Ok(Column::from_values_with_hint(
         name,
         column.iter().filter(|val| seen.insert(val.key())).collect(),
+        value_type,
     ))
 }
 
@@ -786,14 +869,32 @@ fn evaluate_conditional(frame: &Frame, conditional: &ConditionalExpr) -> Result<
             otherwise.value(index, len, "conditional")
         })
         .collect::<Result<_>>()?;
+    let value_type = common_value_type(
+        cases
+            .iter()
+            .map(|(_, then)| then.column.value_type())
+            .chain(std::iter::once(otherwise.column.value_type())),
+    );
     Ok(Evaluated {
-        column: Column::from_values(name, values),
+        column: Column::from_values_with_hint(name, values, value_type),
         shape,
     })
 }
 
+fn common_value_type(types: impl IntoIterator<Item = Option<ValueType>>) -> Option<ValueType> {
+    let mut types = types.into_iter().flatten();
+    let first = types.next()?;
+    types.all(|value_type| value_type == first).then_some(first)
+}
+
 fn apply_cast(cast: &CastExpr, column: Column) -> Result<Column> {
-    map_column(column, |value| cast_value(value, cast.ty))
+    let value_type = Some(match cast.ty {
+        Type::Str => ValueType::String,
+        Type::UInt => ValueType::UInt,
+        Type::Int => ValueType::Int,
+        Type::Float => ValueType::Float,
+    });
+    map_column(column, value_type, |val| cast_value(val, cast.ty))
 }
 
 fn cast_value(value: &Value, ty: Type) -> Result<Value> {
@@ -878,7 +979,7 @@ pub(crate) fn select(frame: &Frame, expressions: &[Expr]) -> Result<Frame> {
 }
 
 fn apply_log(log: &LogExpr, column: Column) -> Result<Column> {
-    map_column(column, |val| {
+    map_column(column, Some(ValueType::Float), |val| {
         Ok(Value::Float(
             val.number("log")?
                 .expect("null handled by map")
@@ -893,7 +994,12 @@ fn evaluate_string(frame: &Frame, expression: &StrExpr) -> Result<Evaluated> {
     let strings = evaluate_shaped(frame, string)?;
     let patterns = evaluate_shaped(frame, pattern)?;
     let name = strings.column.name().to_owned();
-    zip_evaluated(name, strings, patterns, |string, pattern| {
+    let value_type = Some(match expression {
+        StrExpr::Contains(_) => ValueType::Bool,
+        StrExpr::Extract(_) => ValueType::String,
+        StrExpr::ExtractAll(_) | StrExpr::Split(_) => ValueType::List,
+    });
+    zip_evaluated(name, value_type, strings, patterns, |string, pattern| {
         if matches!(string, Value::Null) || matches!(pattern, Value::Null) {
             return Ok(Value::Null);
         }
@@ -969,12 +1075,14 @@ fn evaluate_sort_by(frame: &Frame, sort: &SortByExpr) -> Result<Evaluated> {
         .collect();
     let indices = sorted_indices(&references, len)?;
     let name = value.column.name().to_owned();
-    let column = Column::from_values(
+    let value_type = value.column.value_type();
+    let column = Column::from_values_with_hint(
         name,
         indices
             .iter()
             .map(|index| value.value(*index, len, "sort-by"))
             .collect::<Result<_>>()?,
+        value_type,
     );
     Ok(Evaluated { column, shape })
 }
@@ -982,12 +1090,14 @@ fn evaluate_sort_by(frame: &Frame, sort: &SortByExpr) -> Result<Evaluated> {
 fn apply_sort(column: Column, order: SortOrder) -> Result<Column> {
     let indices = sorted_indices(&[(&column, order)], column.len())?;
     let name = column.name().to_owned();
-    Ok(Column::from_values(
+    let value_type = column.value_type();
+    Ok(Column::from_values_with_hint(
         name,
         indices
             .iter()
             .map(|index| column.get(*index).unwrap())
             .collect(),
+        value_type,
     ))
 }
 
