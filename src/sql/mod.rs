@@ -4,6 +4,7 @@ use self::lexer::Token;
 
 pub mod expr;
 pub mod lexer;
+mod span;
 pub mod stat;
 
 pub(crate) type Tokens<'a> = &'a [Token];
@@ -27,7 +28,7 @@ impl TokenParseError {
         Self { offset, detail }
     }
 
-    pub(crate) fn byte_offset(&self, spans: &[lexer::TokenSpan]) -> usize {
+    pub(crate) fn byte_offset(&self, spans: &[span::TokenSpan]) -> usize {
         spans
             .get(self.offset)
             .map(|span| span.range.start)
@@ -39,7 +40,7 @@ impl TokenParseError {
         &self,
         source: &str,
         _tokens: &[Token],
-        spans: &[lexer::TokenSpan],
+        spans: &[span::TokenSpan],
         _max_offset: usize,
     ) -> String {
         let byte_off = self.byte_offset(spans);
@@ -69,7 +70,7 @@ pub fn parse(source: &str) -> Result<S, ParseError> {
     match stat::parse_detailed(&tokens) {
         Ok(statements) => Ok(statements),
         Err(error) => {
-            let spans = lexer::token_spans(source, &tokens).map_err(ParseError::Lexer)?;
+            let spans = span::token_spans(source, &tokens).map_err(ParseError::Lexer)?;
             let top_level = error.render_source(source, &tokens, &spans, source.len());
             let nested = nested_expression_error(source, &tokens, &spans);
             let message = match (nested, spans.get(error.offset)) {
@@ -84,7 +85,7 @@ pub fn parse(source: &str) -> Result<S, ParseError> {
 pub(crate) fn nested_expression_error(
     source: &str,
     tokens: &[Token],
-    spans: &[lexer::TokenSpan],
+    spans: &[span::TokenSpan],
 ) -> Option<(usize, String)> {
     let mut earliest: Option<(usize, String)> = None;
     for (token, span) in tokens.iter().zip(spans) {
