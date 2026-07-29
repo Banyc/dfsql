@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::sql::{
     SortOrder,
@@ -150,9 +150,15 @@ fn filter_frame(frame: &Frame, expression: &Expr) -> Result<Frame> {
 }
 
 fn sort_frame(frame: &Frame, pairs: &[(SortOrder, String)]) -> Result<Frame> {
+    let by_name = columns_by_name(frame);
     let columns = pairs
         .iter()
-        .map(|(order, name)| Ok((frame.column(name)?, *order)))
+        .map(|(order, name)| {
+            by_name
+                .get(name.as_str())
+                .map(|column| (*column, *order))
+                .ok_or_else(|| Error::ColumnNotFound(name.clone()))
+        })
         .collect::<Result<Vec<_>>>()?;
     Ok(frame.take(&sorted_indices(&columns, frame.height())?))
 }
@@ -162,9 +168,15 @@ fn group_aggregate(frame: &Frame, group_by: &[String], expressions: &[Expr]) -> 
     if group_by.is_empty() && expressions.is_empty() {
         return Ok(Frame::default());
     }
+    let by_name = columns_by_name(frame);
     let keys = group_by
         .iter()
-        .map(|name| frame.column(name))
+        .map(|name| {
+            by_name
+                .get(name.as_str())
+                .copied()
+                .ok_or_else(|| Error::ColumnNotFound(name.clone()))
+        })
         .collect::<Result<Vec<_>>>()?;
     let mut groups: Vec<(Vec<Value>, Vec<usize>)> = Vec::new();
     let mut lookup: HashMap<Vec<ValueKey>, usize> = HashMap::new();
@@ -293,12 +305,20 @@ fn row_column(frame: &Frame, expression: &Expr, operation: &'static str) -> Resu
     evaluate_shaped(frame, expression)?.materialize(frame.height(), operation)
 }
 
+fn columns_by_name(frame: &Frame) -> HashMap<&str, &Column> {
+    frame
+        .columns()
+        .iter()
+        .map(|column| (column.name(), column))
+        .collect()
+}
+
 fn build_join_frame(
     left: &Frame,
     right: &Frame,
     pairs: &[(Option<usize>, Option<usize>)],
 ) -> Result<Frame> {
-    let mut names = Vec::with_capacity(left.width() + right.width());
+    let mut names = HashSet::with_capacity(left.width() + right.width());
     let mut columns = Vec::with_capacity(left.width() + right.width());
     for (side, rows) in [
         (left, pairs.iter().map(|pair| pair.0).collect::<Vec<_>>()),
@@ -306,10 +326,9 @@ fn build_join_frame(
     ] {
         for column in side.columns() {
             let mut name = column.name().to_owned();
-            while names.contains(&name) {
+            while !names.insert(name.clone()) {
                 name.push_str("_right");
             }
-            names.push(name.clone());
             columns.push(Column::from_values_with_hint(
                 name,
                 rows.iter()
