@@ -1,8 +1,19 @@
+use winnow::error::{ContextError, ErrMode, StrContext, StrContextValue};
 use winnow::prelude::*;
 use winnow::stream::AsChar;
 
-fn backtrack() -> winnow::error::ErrMode<winnow::error::ContextError> {
-    winnow::error::ErrMode::Backtrack(winnow::error::ContextError::new())
+const MAX_NESTING_DEPTH: usize = 256;
+
+fn backtrack() -> ErrMode<ContextError> {
+    ErrMode::Backtrack(ContextError::new())
+}
+
+fn depth_exceeded() -> ErrMode<ContextError> {
+    let mut context = ContextError::new();
+    context.push(StrContext::Expected(StrContextValue::Description(
+        "maximum nesting depth exceeded",
+    )));
+    ErrMode::Cut(context)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +42,13 @@ pub fn lex(source: &str) -> Result<Vec<Token>, String> {
 }
 
 pub fn lexer(input: &mut &str) -> ModalResult<Vec<Token>> {
+    lexer_at(input, 0)
+}
+
+fn lexer_at(input: &mut &str, depth: usize) -> ModalResult<Vec<Token>> {
+    if depth > MAX_NESTING_DEPTH {
+        return Err(depth_exceeded());
+    }
     let mut tokens = Vec::new();
     loop {
         skip_ws(input);
@@ -38,7 +56,7 @@ pub fn lexer(input: &mut &str) -> ModalResult<Vec<Token>> {
             break Ok(tokens);
         }
         let start = input.len();
-        let token = token(input)?;
+        let token = token_at(input, depth)?;
         tokens.push(token);
         if input.len() == start {
             return Err(backtrack());
@@ -57,11 +75,15 @@ pub(super) fn skip_ws(input: &mut &str) {
 }
 
 pub(super) fn token(input: &mut &str) -> ModalResult<Token> {
+    token_at(input, 0)
+}
+
+fn token_at(input: &mut &str, depth: usize) -> ModalResult<Token> {
     let c = input.chars().next().ok_or_else(backtrack)?;
     match c {
         '(' => {
             *input = &input[1..];
-            let inner = lexer.parse_next(input)?;
+            let inner = lexer_at(input, depth + 1)?;
             skip_ws(input);
             expect_char(input, ')')?;
             Ok(Token::Parens(inner))
@@ -69,7 +91,7 @@ pub(super) fn token(input: &mut &str) -> ModalResult<Token> {
         ')' => Err(backtrack()),
         '[' => {
             *input = &input[1..];
-            let inner = lexer.parse_next(input)?;
+            let inner = lexer_at(input, depth + 1)?;
             skip_ws(input);
             expect_char(input, ']')?;
             Ok(Token::Brackets(inner))
@@ -472,6 +494,13 @@ mod tests {
         assert!(lex("a)").is_err());
         assert!(lex("(a").is_err());
         assert!(lex("[a").is_err());
+    }
+
+    #[test]
+    fn rejects_excessive_nesting_depth() {
+        assert!(lex(&"(".repeat(1_000_000)).is_err());
+        assert!(lex(&"[".repeat(1_000_000)).is_err());
+        assert!(lex(&"(a".repeat(1_000_000)).is_err());
     }
 
     #[test]
