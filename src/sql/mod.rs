@@ -134,3 +134,35 @@ pub enum SortOrder {
     Asc,
     Desc,
 }
+
+#[cfg(test)]
+mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    use super::*;
+
+    #[test]
+    fn parse_never_panics_on_multi_byte_truncated_inputs() {
+        let cases = [
+            r#"select "héllo wörld" from df"#,
+            r#"select "中文列名" as name"#,
+            r#"group col "城市" agg sum col "人口""#,
+            r#"select "😀emoji 🎉" from df"#,
+        ];
+        for case in cases {
+            assert!(parse(case).is_ok(), "invalid SQL fixture: {case:?}");
+            let bytes = case.as_bytes();
+            for i in 0..=bytes.len() {
+                let truncated = if case.is_char_boundary(i) {
+                    case[..i].to_string()
+                } else {
+                    String::from_utf8_lossy(&bytes[..i]).into_owned()
+                };
+                assert!(
+                    catch_unwind(AssertUnwindSafe(|| parse(&truncated))).is_ok(),
+                    "parse panicked on {case:?} truncated at byte {i}: {truncated:?}"
+                );
+            }
+        }
+    }
+}
