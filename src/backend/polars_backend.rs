@@ -201,7 +201,7 @@ fn convert_expr(expr: &sql::expr::Expr) -> Result<polars::lazy::dsl::Expr, Error
             expr.alias(&alias.name)
         }
         sql::expr::Expr::Conditional(conditional) => {
-            #[allow(clippy::large_enum_variant)]
+            #[expect(clippy::large_enum_variant)]
             enum Case {
                 Then(polars::lazy::dsl::Then),
                 ChainedThen(polars::lazy::dsl::ChainedThen),
