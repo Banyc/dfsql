@@ -71,7 +71,7 @@ impl Executor {
         self.input.insert(self.frame_name.clone(), frame);
     }
 
-    pub fn execute(&mut self, statements: &sql::S) -> Result<(), Error> {
+    pub fn execute(&mut self, statements: &sql::Program) -> Result<(), Error> {
         let mut next = Self {
             frame_name: self.frame_name.clone(),
             input: self.input.clone(),
@@ -79,7 +79,7 @@ impl Executor {
         let mut frame = next.frame().inner().clone();
         for stat in &statements.statements {
             frame = apply_stat(frame, stat, &mut next.input).map_err(map_polars_executor_error)?;
-            if let sql::stat::Stat::Use(r#use) = stat {
+            if let sql::stmt::Stmt::UseFrame(r#use) = stat {
                 next.set_frame_name(r#use.df_name.clone())?;
             }
             next.set_frame(PolarsFrame::from_inner(frame.clone()));

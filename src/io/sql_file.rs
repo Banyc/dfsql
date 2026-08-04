@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    file_ops::atomic_file::{StagedFile, stage_file},
+    io::atomic_file::{StagedFile, stage_file},
     sql,
 };
 
@@ -21,7 +21,7 @@ pub(crate) fn stage_repl_sql_output<'a>(
     })
 }
 
-pub(crate) fn read_repl_sql_file(path: impl AsRef<Path>) -> anyhow::Result<Vec<String>> {
+pub(crate) fn read_repl_history(path: impl AsRef<Path>) -> anyhow::Result<Vec<String>> {
     let file = std::fs::File::options().read(true).open(&path)?;
     let mut reader = BufReader::new(file);
     let mut lines = vec![];
@@ -39,7 +39,7 @@ pub(crate) fn read_repl_sql_file(path: impl AsRef<Path>) -> anyhow::Result<Vec<S
     Ok(lines)
 }
 
-pub(crate) fn read_sql_file(path: impl AsRef<Path>) -> anyhow::Result<sql::S> {
+pub(crate) fn read_sql_file(path: impl AsRef<Path>) -> anyhow::Result<sql::Program> {
     let mut file = std::fs::File::options().read(true).open(&path)?;
     let mut src = String::new();
     file.read_to_string(&mut src)?;

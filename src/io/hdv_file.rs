@@ -340,7 +340,7 @@ fn validate_hdv_text(rows: &[ValueRow]) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::file_ops::{read_df_file, write_df_output};
+    use crate::io::{read_df_file, write_df_output};
     use std::{
         path::{Path, PathBuf},
         sync::atomic::{AtomicU64, Ordering},

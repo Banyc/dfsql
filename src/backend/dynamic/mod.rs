@@ -1,12 +1,13 @@
+//! The dynamically-typed built-in engine.
+
 mod executor;
 pub(crate) mod expression;
 mod frame;
 mod value;
 
-pub use executor::Executor;
+pub use executor::Engine;
 pub use frame::{Column, ColumnData, Frame};
 pub use value::{IntoValue, Value, ValueType};
-pub type MaterializedFrame = Frame;
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 #[non_exhaustive]

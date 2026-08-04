@@ -60,9 +60,9 @@ pub(super) fn evaluate_sort_by(frame: &Frame, sort: &SortByExpr) -> Result<Evalu
         "sort-by",
         std::iter::once(&value).chain(keys.iter().map(|(key, _)| key)),
     )?;
-    let shape = keys
+    let arity = keys
         .iter()
-        .fold(value.shape, |shape, (key, _)| shape.merge(key.shape));
+        .fold(value.arity, |arity, (key, _)| arity.merge(key.arity));
     let key_columns: Result<Vec<_>> = keys
         .into_iter()
         .map(|(key, order)| Ok((key.materialize(len, "sort-by")?, order)))
@@ -83,7 +83,7 @@ pub(super) fn evaluate_sort_by(frame: &Frame, sort: &SortByExpr) -> Result<Evalu
             .collect::<Result<_>>()?,
         value_type,
     );
-    Ok(Evaluated { column, shape })
+    Ok(Evaluated { column, arity })
 }
 
 pub(super) fn apply_sort(column: Column, order: SortOrder) -> Result<Column> {

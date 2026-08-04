@@ -74,7 +74,7 @@ pub(super) fn zip_evaluated(
         .collect::<Result<_>>()?;
     Ok(Evaluated {
         column: Column::from_values_with_hint(name, values, value_type),
-        shape: left.shape.merge(right.shape),
+        arity: left.arity.merge(right.arity),
     })
 }
 

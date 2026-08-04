@@ -22,12 +22,12 @@ pub(crate) use selectors::{expand_selectors, select};
 pub(crate) use sort::sorted_indices;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Shape {
+pub(crate) enum Arity {
     Scalar,
     Rows,
 }
 
-impl Shape {
+impl Arity {
     fn merge(self, other: Self) -> Self {
         if self == Self::Scalar && other == Self::Scalar {
             Self::Scalar
@@ -40,14 +40,14 @@ impl Shape {
 #[derive(Debug)]
 pub(crate) struct Evaluated {
     pub(crate) column: Column,
-    pub(crate) shape: Shape,
+    pub(crate) arity: Arity,
 }
 
 impl Evaluated {
     fn value(&self, index: usize, len: usize, operation: &'static str) -> Result<Value> {
-        match self.shape {
-            Shape::Scalar if self.column.len() == 1 => Ok(self.column.get(0).unwrap()),
-            Shape::Rows if self.column.len() == len => Ok(self.column.get(index).unwrap()),
+        match self.arity {
+            Arity::Scalar if self.column.len() == 1 => Ok(self.column.get(0).unwrap()),
+            Arity::Rows if self.column.len() == len => Ok(self.column.get(index).unwrap()),
             _ => Err(Error::LengthMismatch {
                 operation,
                 left: self.column.len(),
@@ -57,10 +57,10 @@ impl Evaluated {
     }
 
     pub(crate) fn materialize(self, len: usize, operation: &'static str) -> Result<Column> {
-        match self.shape {
-            Shape::Scalar => self.column.broadcast(len),
-            Shape::Rows if self.column.len() == len => Ok(self.column),
-            Shape::Rows => Err(Error::LengthMismatch {
+        match self.arity {
+            Arity::Scalar => self.column.broadcast(len),
+            Arity::Rows if self.column.len() == len => Ok(self.column),
+            Arity::Rows => Err(Error::LengthMismatch {
                 operation,
                 left: self.column.len(),
                 right: len,
@@ -114,62 +114,62 @@ pub(crate) fn expression_name(expression: &Expr) -> String {
 }
 
 pub(crate) fn evaluate_shaped(frame: &Frame, expression: &Expr) -> Result<Evaluated> {
-    let (column, shape) = match expression {
+    let (column, arity) = match expression {
         Expr::Col(name) if name == "*" => return Err(Error::SelectorInScalarExpression),
-        Expr::Col(name) => (frame.column(name)?.clone(), Shape::Rows),
+        Expr::Col(name) => (frame.column(name)?.clone(), Arity::Rows),
         Expr::Literal(value) => (
             Column::from_values("literal", vec![literal_value(value)?]),
-            Shape::Scalar,
+            Arity::Scalar,
         ),
         Expr::Binary(value) => {
             let left = evaluate_shaped(frame, &value.left)?;
             let right = evaluate_shaped(frame, &value.right)?;
             let result = apply_binary(value.operator, left, right)?;
-            (result.column, result.shape)
+            (result.column, result.arity)
         }
         Expr::Unary(value) => {
             let inner = evaluate_shaped(frame, &value.expr)?;
-            let shape = if is_reduction(value.operator.clone()) {
-                Shape::Scalar
+            let arity = if is_reduction(value.operator.clone()) {
+                Arity::Scalar
             } else {
-                inner.shape
+                inner.arity
             };
-            (apply_unary(value.operator.clone(), inner.column)?, shape)
+            (apply_unary(value.operator.clone(), inner.column)?, arity)
         }
         Expr::Alias(value) => {
             let evaluated = evaluate_shaped(frame, &value.expr)?;
-            (evaluated.column.rename(value.name.clone()), evaluated.shape)
+            (evaluated.column.rename(value.name.clone()), evaluated.arity)
         }
         Expr::Conditional(value) => {
             let result = evaluate_conditional(frame, value)?;
-            (result.column, result.shape)
+            (result.column, result.arity)
         }
         Expr::Cast(value) => {
             let result = evaluate_shaped(frame, &value.expr)?;
-            (apply_cast(value, result.column)?, result.shape)
+            (apply_cast(value, result.column)?, result.arity)
         }
         Expr::Log(value) => {
             let result = evaluate_shaped(frame, &value.expr)?;
-            (apply_log(value, result.column)?, result.shape)
+            (apply_log(value, result.column)?, result.arity)
         }
         Expr::Str(value) => {
             let result = evaluate_string(frame, value)?;
-            (result.column, result.shape)
+            (result.column, result.arity)
         }
         Expr::Standalone(value) => match value.operator {
-            StandaloneOperator::Len => (Column::new("len", [frame.height() as u64]), Shape::Scalar),
+            StandaloneOperator::Len => (Column::new("len", [frame.height() as u64]), Arity::Scalar),
         },
         Expr::SortBy(value) => {
             let result = evaluate_sort_by(frame, value)?;
-            (result.column, result.shape)
+            (result.column, result.arity)
         }
         Expr::Sort(value) => {
             let result = evaluate_shaped(frame, &value.expr)?;
-            (apply_sort(result.column, value.order)?, result.shape)
+            (apply_sort(result.column, value.order)?, result.arity)
         }
         Expr::Exclude(_) => return Err(Error::SelectorInScalarExpression),
     };
-    Ok(Evaluated { column, shape })
+    Ok(Evaluated { column, arity })
 }
 
 fn combined_len<'a>(
@@ -178,7 +178,7 @@ fn combined_len<'a>(
 ) -> Result<usize> {
     let mut rows = None;
     for value in values {
-        if value.shape == Shape::Rows {
+        if value.arity == Arity::Rows {
             if let Some(len) = rows {
                 if len != value.column.len() {
                     return Err(Error::LengthMismatch {
@@ -210,8 +210,8 @@ fn evaluate_conditional(frame: &Frame, conditional: &ConditionalExpr) -> Result<
         ));
     }
     let otherwise = evaluate_shaped(frame, &conditional.otherwise)?;
-    let shape = cases.iter().fold(otherwise.shape, |shape, (when, then)| {
-        shape.merge(when.shape).merge(then.shape)
+    let arity = cases.iter().fold(otherwise.arity, |arity, (when, then)| {
+        arity.merge(when.arity).merge(then.arity)
     });
     let len = combined_len(
         "conditional",
@@ -240,7 +240,7 @@ fn evaluate_conditional(frame: &Frame, conditional: &ConditionalExpr) -> Result<
     );
     Ok(Evaluated {
         column: Column::from_values_with_hint(name, values, value_type),
-        shape,
+        arity,
     })
 }
 
@@ -435,11 +435,11 @@ mod tests {
     fn binary_rejects_mismatched_row_shapes() {
         let left = Evaluated {
             column: Column::new("x", [1_i64, 2]),
-            shape: Shape::Rows,
+            arity: Arity::Rows,
         };
         let right = Evaluated {
             column: Column::new("y", [1_i64, 2, 3]),
-            shape: Shape::Rows,
+            arity: Arity::Rows,
         };
         let err = apply_binary(BinaryOperator::Add, left, right).unwrap_err();
         assert_eq!(
@@ -605,7 +605,7 @@ mod tests {
         .unwrap();
         let result =
             evaluate_shaped(&frame, &unary(UnaryOperator::Unique, Expr::Col("a".into()))).unwrap();
-        assert_eq!(result.shape, Shape::Rows);
+        assert_eq!(result.arity, Arity::Rows);
         assert_eq!(
             result.column.values(),
             vec![Value::Int(1), Value::Null, Value::Int(2)]
@@ -651,7 +651,7 @@ mod tests {
             })),
         )
         .unwrap();
-        assert_eq!(result.shape, Shape::Rows);
+        assert_eq!(result.arity, Arity::Rows);
         assert_eq!(
             result.column.values(),
             vec![
@@ -694,7 +694,7 @@ mod tests {
             }))),
         )
         .unwrap();
-        assert_eq!(contains.shape, Shape::Rows);
+        assert_eq!(contains.arity, Arity::Rows);
         assert_eq!(
             contains.column.values(),
             vec![Value::Bool(true), Value::Null, Value::Bool(true)]
@@ -781,22 +781,22 @@ mod tests {
 
         let result =
             evaluate_shaped(&frame, &unary(UnaryOperator::Mean, Expr::Col("a".into()))).unwrap();
-        assert_eq!(result.shape, Shape::Scalar);
+        assert_eq!(result.arity, Arity::Scalar);
         assert_eq!(result.column.get(0), Some(Value::Float(2.0)));
 
         let result =
             evaluate_shaped(&frame, &unary(UnaryOperator::Median, Expr::Col("a".into()))).unwrap();
-        assert_eq!(result.shape, Shape::Scalar);
+        assert_eq!(result.arity, Arity::Scalar);
         assert_eq!(result.column.get(0), Some(Value::Float(2.0)));
 
         let result =
             evaluate_shaped(&frame, &unary(UnaryOperator::Var, Expr::Col("a".into()))).unwrap();
-        assert_eq!(result.shape, Shape::Scalar);
+        assert_eq!(result.arity, Arity::Scalar);
         assert_eq!(result.column.get(0), Some(Value::Float(2.0)));
 
         let result =
             evaluate_shaped(&frame, &unary(UnaryOperator::Std, Expr::Col("a".into()))).unwrap();
-        assert_eq!(result.shape, Shape::Scalar);
+        assert_eq!(result.arity, Arity::Scalar);
         assert_eq!(result.column.get(0), Some(Value::Float(2.0_f64.sqrt())));
     }
 
@@ -948,7 +948,7 @@ mod tests {
             otherwise: Expr::Literal(Literal::Int("3".into())),
         }));
         let result = evaluate_shaped(&frame, &expression).unwrap();
-        assert_eq!(result.shape, Shape::Rows);
+        assert_eq!(result.arity, Arity::Rows);
         assert_eq!(
             result.column.values(),
             vec![Value::Int(1), Value::Int(2), Value::Int(2), Value::Int(1)]
@@ -986,7 +986,7 @@ mod tests {
             })),
         )
         .unwrap();
-        assert_eq!(float.shape, Shape::Rows);
+        assert_eq!(float.arity, Arity::Rows);
         assert_eq!(float.column.values(), vec![Value::Float(2.0), Value::Null]);
         let string = evaluate_shaped(
             &frame,
@@ -1147,7 +1147,7 @@ mod tests {
             })),
         )
         .unwrap();
-        assert_eq!(sorted.shape, Shape::Rows);
+        assert_eq!(sorted.arity, Arity::Rows);
         assert_eq!(
             sorted.column.values(),
             vec![
@@ -1165,7 +1165,7 @@ mod tests {
             })),
         )
         .unwrap();
-        assert_eq!(scalar.shape, Shape::Rows);
+        assert_eq!(scalar.arity, Arity::Rows);
         assert_eq!(
             scalar.column.values(),
             vec![Value::Int(1), Value::Int(1), Value::Int(1), Value::Int(1)]

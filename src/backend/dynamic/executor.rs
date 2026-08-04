@@ -3,23 +3,23 @@ use std::collections::{HashMap, HashSet};
 use crate::sql::{
     SortOrder,
     expr::Expr,
-    stat::{JoinStat, SingleColJoinStat, SingleColJoinType, Stat},
+    stmt::{JoinStat, SingleColJoinStat, SingleColJoinType, Stmt},
 };
 
 use super::{
     Column, Error, Frame, Result, Value,
     expression::{
-        Shape, evaluate_shaped, expand_selectors, expression_name, select, sorted_indices,
+        Arity, evaluate_shaped, expand_selectors, expression_name, select, sorted_indices,
     },
     value::ValueKey,
 };
 
-pub struct Executor {
+pub struct Engine {
     frame_name: String,
     input: HashMap<String, Frame>,
 }
 
-impl Executor {
+impl Engine {
     pub fn from_frame(frame_name: impl Into<String>, frame: Frame) -> Self {
         let frame_name = frame_name.into();
         Self {
@@ -78,7 +78,7 @@ impl Executor {
         Ok(self.frame().clone())
     }
 
-    pub fn execute(&mut self, statements: &crate::sql::S) -> Result<()> {
+    pub fn execute(&mut self, statements: &crate::sql::Program) -> Result<()> {
         let mut next = Self {
             frame_name: self.frame_name.clone(),
             input: self.input.clone(),
@@ -90,10 +90,10 @@ impl Executor {
         Ok(())
     }
 
-    pub fn execute_statement(&mut self, statement: &Stat) -> Result<()> {
+    pub fn execute_statement(&mut self, statement: &Stmt) -> Result<()> {
         match statement {
-            Stat::Use(value) => return self.set_frame_name(value.df_name.clone()),
-            Stat::Clone(value) => {
+            Stmt::UseFrame(value) => return self.set_frame_name(value.df_name.clone()),
+            Stmt::CloneFrame(value) => {
                 self.input
                     .insert(value.df_name.clone(), self.frame().clone());
                 return Ok(());
@@ -101,10 +101,10 @@ impl Executor {
             _ => {}
         }
         let frame = match statement {
-            Stat::Select(value) => select(self.frame(), &value.columns)?,
-            Stat::GroupAgg(value) => group_aggregate(self.frame(), &value.group_by, &value.agg)?,
-            Stat::Filter(value) => filter_frame(self.frame(), &value.condition)?,
-            Stat::Limit(value) => {
+            Stmt::Select(value) => select(self.frame(), &value.columns)?,
+            Stmt::GroupAgg(value) => group_aggregate(self.frame(), &value.group_by, &value.agg)?,
+            Stmt::Filter(value) => filter_frame(self.frame(), &value.condition)?,
+            Stmt::Limit(value) => {
                 let rows = value
                     .rows
                     .parse::<usize>()
@@ -115,18 +115,18 @@ impl Executor {
                 self.frame()
                     .take(&(0..rows.min(self.frame().height())).collect::<Vec<_>>())
             }
-            Stat::Reverse => self
+            Stmt::Reverse => self
                 .frame()
                 .take(&(0..self.frame().height()).rev().collect::<Vec<_>>()),
-            Stat::Sort(value) => sort_frame(self.frame(), &value.pairs)?,
-            Stat::Join(JoinStat::SingleCol(value)) => {
+            Stmt::Sort(value) => sort_frame(self.frame(), &value.pairs)?,
+            Stmt::Join(JoinStat::SingleCol(value)) => {
                 let right = self
                     .input
                     .get(&value.other)
                     .ok_or_else(|| Error::FrameNotFound(value.other.clone()))?;
                 join_frames(self.frame(), right, value)?
             }
-            Stat::Use(_) | Stat::Clone(_) => unreachable!(),
+            Stmt::UseFrame(_) | Stmt::CloneFrame(_) => unreachable!(),
         };
         self.set_frame(frame);
         Ok(())
@@ -214,7 +214,7 @@ fn group_aggregate(frame: &Frame, group_by: &[String], expressions: &[Expr]) -> 
             .map(|(_, rows)| {
                 let result = evaluate_shaped(&frame.take(rows), expression)?;
                 value_type = value_type.or(result.column.value_type());
-                Ok(if result.shape == Shape::Scalar {
+                Ok(if result.arity == Arity::Scalar {
                     result
                         .column
                         .into_values()

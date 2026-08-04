@@ -13,27 +13,29 @@ cargo install dfsql --features cli
 
 ## Backends
 
-Without Cargo features, the root `Executor`, `Frame`, `MaterializedFrame`,
-`Error`, and `Result` names use the dynamic backend.
+Without Cargo features, the root `Frame`, `MaterializedFrame`, `Error`, and
+`Result` names use the dynamic backend, and the public executor is
+`dfsql::backend::DynamicExecutor`.
 
-Enabling `polars-backend` makes the root executor use Polars internally:
+Enabling `polars-backend` selects the Polars executor instead:
 
 ```toml
 [dependencies]
 dfsql = { version = "0.16", features = ["polars-backend"] }
 ```
 
+With `polars-backend` the public executor is `dfsql::backend::PolarsExecutor`.
 The root `Frame` and `MaterializedFrame` types encapsulate the selected
 implementation, so Polars types are not part of dfsql's public API. The
 dynamic backend is still compiled and remains available explicitly through
-`dfsql::backend::dynamic::{Executor,Frame}`.
+`dfsql::backend::dynamic::{Engine,Frame}`.
 
 The `cli` feature enables the
 command-line application that uses Polars.
 
 ## File formats
 
-The `file-ops` feature reads and writes CSV (`.csv`), JSON arrays (`.json`), JSON Lines (`.jsonl` or `.ndjson`), HDV binary (`.hdvb`), and HDV text (`.hdvt`) files via `dfsql::file_ops`. Actual format handling requires `polars-backend`; recognized formats panic without it. The `cli` feature includes both features.
+The `file-ops` feature reads and writes CSV (`.csv`), JSON arrays (`.json`), JSON Lines (`.jsonl` or `.ndjson`), HDV binary (`.hdvb`), and HDV text (`.hdvt`) files via `dfsql::io`. Actual format handling requires `polars-backend`; recognized formats panic without it. The `cli` feature includes both features.
 
 HDV conversion uses the core `hdv` crate without its Polars feature. The
 Polars conversion lives in dfsql, so upgrading Polars does not require a

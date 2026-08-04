@@ -6,7 +6,7 @@ use crate::sql::lexer::{
 };
 use rustyline::{Completer, Helper, Hinter, Validator, highlight::Highlighter};
 
-use super::highlighter::{KeywordColor, TerminalColor, TerminalKeywordHighlighter};
+use super::terminal_color::{KeywordColor, TerminalColor, TerminalKeywordHighlighter};
 
 #[derive(Debug, Helper, Completer, Hinter, Validator)]
 pub struct SqlHelper {

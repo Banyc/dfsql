@@ -33,7 +33,7 @@ impl PolarsFrame {
             .clone()
             .collect()
             .map(PolarsMaterializedFrame::from_inner)
-            .map_err(|error| Error::Backend(error.to_string()))
+            .map_err(|error| Error::Engine(error.to_string()))
     }
 
     pub(crate) fn from_inner(inner: polars::lazy::frame::LazyFrame) -> Self {
@@ -64,7 +64,7 @@ impl DynamicFrame {
         Ok(Self::from_inner(frame))
     }
 
-    pub fn collect(&self) -> Result<crate::backend::DynamicMaterializedFrame> {
+    pub fn to_materialized(&self) -> Result<crate::backend::DynamicMaterializedFrame> {
         Ok(crate::backend::DynamicMaterializedFrame::from_inner(
             self.inner.clone(),
         ))

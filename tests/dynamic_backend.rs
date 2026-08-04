@@ -1,11 +1,11 @@
 use dfsql::{
-    backend::dynamic::{Column, ColumnData, Error, Executor, Frame, Value},
+    backend::dynamic::{Column, ColumnData, Engine, Error, Frame, Value},
     sql,
 };
 use std::{collections::HashMap, sync::Arc};
 
 fn run(frame: Frame, query: &str) -> Result<Frame, Error> {
-    let mut executor = Executor::from_frame("table", frame);
+    let mut executor = Engine::from_frame("table", frame);
     executor.execute(&sql::parse(query).unwrap())?;
     Ok(executor.frame().clone())
 }
@@ -439,7 +439,7 @@ fn global_grouping_handles_empty_input_without_special_expression_rules() {
     assert_eq!(values(&output, "non_null"), [Value::UInt(0)]);
 }
 
-fn join_executor() -> Executor {
+fn join_executor() -> Engine {
     let left = Frame::new(vec![
         Column::new("id", [1_i64, 2]),
         Column::new("name", ["one", "two"]),
@@ -450,7 +450,7 @@ fn join_executor() -> Executor {
         Column::new("enabled", [true, false]),
     ])
     .unwrap();
-    Executor::new(
+    Engine::new(
         "left",
         HashMap::from([("left".into(), left), ("other".into(), right)]),
     )
@@ -492,7 +492,7 @@ fn joins_apply_one_key_rule_and_keep_both_input_schemas() {
 fn null_join_keys_never_match() {
     let left = Frame::new(vec![Column::new("id", [None::<i64>])]).unwrap();
     let right = Frame::new(vec![Column::new("id", [None::<i64>])]).unwrap();
-    let mut executor = Executor::new(
+    let mut executor = Engine::new(
         "left",
         HashMap::from([("left".into(), left), ("other".into(), right)]),
     )
@@ -517,7 +517,7 @@ fn clone_and_use_only_change_executor_state() {
         Column::new("keep", [true, false]),
     ])
     .unwrap();
-    let mut executor = Executor::from_frame("table", frame);
+    let mut executor = Engine::from_frame("table", frame);
     executor
         .execute(&sql::parse("clone snapshot filter keep use snapshot").unwrap())
         .unwrap();
@@ -567,7 +567,7 @@ fn values_display_and_round_trip_lists() {
 #[test]
 fn programmatic_sort_by_ast_rejects_an_empty_key_list() {
     let mut statements = sql::parse("select sort value by order").unwrap();
-    let sql::stat::Stat::Select(select) = &mut statements.statements[0] else {
+    let sql::stmt::Stmt::Select(select) = &mut statements.statements[0] else {
         panic!("expected select statement")
     };
     let sql::expr::Expr::SortBy(sort) = &mut select.columns[0] else {
@@ -579,7 +579,7 @@ fn programmatic_sort_by_ast_rejects_an_empty_key_list() {
         Column::new("order", [1_i64, 2]),
     ])
     .unwrap();
-    let mut executor = Executor::from_frame("table", frame);
+    let mut executor = Engine::from_frame("table", frame);
     assert_eq!(
         executor.execute(&statements).unwrap_err(),
         Error::InvalidValue {

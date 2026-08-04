@@ -5,7 +5,7 @@ use self::lexer::Token;
 pub mod expr;
 pub mod lexer;
 mod span;
-pub mod stat;
+pub mod stmt;
 
 pub(crate) type Tokens<'a> = &'a [Token];
 
@@ -65,9 +65,9 @@ fn render_source_error(source: &str, byte_offset: usize, detail: &str) -> String
     format!("at line {line_num}, column {col}:\n{offending_line}\n{caret}\n{detail}")
 }
 
-pub fn parse(source: &str) -> Result<S, ParseError> {
+pub fn parse(source: &str) -> Result<Program, ParseError> {
     let tokens = lexer::lex(source).map_err(ParseError::Lexer)?;
-    match stat::parse_detailed(&tokens) {
+    match stmt::parse_detailed(&tokens) {
         Ok(statements) => Ok(statements),
         Err(error) => {
             let spans = span::token_spans(source, &tokens).map_err(ParseError::Lexer)?;
@@ -125,8 +125,8 @@ pub(crate) fn nested_expression_error(
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct S {
-    pub statements: Vec<stat::Stat>,
+pub struct Program {
+    pub statements: Vec<stmt::Stmt>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

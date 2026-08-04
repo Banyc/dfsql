@@ -70,13 +70,13 @@ impl Executor {
         self.input.insert(self.frame_name.clone(), frame);
     }
 
-    pub fn execute(&mut self, statements: &sql::S) -> Result<(), Error> {
+    pub fn execute(&mut self, statements: &sql::Program) -> Result<(), Error> {
         let input = self
             .input
             .iter()
             .map(|(name, frame)| (name.clone(), frame.inner().clone()))
             .collect();
-        let mut executor = dynamic::Executor::new(self.frame_name.clone(), input)
+        let mut executor = dynamic::Engine::new(self.frame_name.clone(), input)
             .expect("the active frame is always present");
         for statement in &statements.statements {
             executor.execute_statement(statement).map_err(|e| match e {

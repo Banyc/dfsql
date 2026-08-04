@@ -13,6 +13,7 @@ use std::path::Path;
 #[cfg(feature = "polars-backend")]
 use std::{fs::File, io::BufWriter};
 
+/// HDV is a tabular data format from the `hdv` crate.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum FileFormat {
     Csv,

@@ -1,11 +1,16 @@
 use dfsql::sql;
+
+#[cfg(not(feature = "polars-backend"))]
+use dfsql::backend::DynamicExecutor as Executor;
+#[cfg(feature = "polars-backend")]
+use dfsql::backend::PolarsExecutor as Executor;
+
 #[cfg(feature = "file-ops")]
 #[test]
-fn file_ops_are_public_without_exposing_backend_types() {
-    assert!(dfsql::file_ops::read_df_file("input.unsupported").is_err());
-    let _write = |frame: dfsql::MaterializedFrame| {
-        dfsql::file_ops::write_df_output(frame, "output.unsupported")
-    };
+fn io_are_public_without_exposing_backend_types() {
+    assert!(dfsql::io::read_df_file("input.unsupported").is_err());
+    let _write =
+        |frame: dfsql::MaterializedFrame| dfsql::io::write_df_output(frame, "output.unsupported");
 }
 #[test]
 fn dynamic_columns_use_typed_data() {
@@ -36,16 +41,16 @@ fn dynamic_columns_use_typed_data() {
 }
 #[test]
 fn dynamic_executor_collects_the_current_frame() {
-    use dfsql::backend::dynamic::{Column, Executor, Frame, MaterializedFrame};
+    use dfsql::backend::dynamic::{Column, Engine, Frame};
     let input = Frame::new(vec![Column::new("id", [1_i64, 2])]).unwrap();
-    let executor = Executor::from_frame("table", input.clone());
-    let output: MaterializedFrame = executor.collect().unwrap();
+    let executor = Engine::from_frame("table", input.clone());
+    let output: Frame = executor.collect().unwrap();
     assert_eq!(output, input);
 }
 #[test]
 fn unary_operators_bind_before_binary_operators() {
     use dfsql::{
-        Executor, Frame,
+        Frame,
         backend::dynamic::{Column, Value},
     };
     let mut executor = Executor::from_frame(
@@ -70,12 +75,12 @@ fn unary_operators_bind_before_binary_operators() {
 #[test]
 fn executor_restore_all_state_after_a_failed_program() {
     use dfsql::{
-        Executor, Frame,
-        backend::dynamic::{Column, Executor as DynamicExecutor, Frame as DynamicFrame},
+        Frame,
+        backend::dynamic::{Column, Engine as DynamicEngine, Frame as DynamicFrame},
     };
     let input = DynamicFrame::new(vec![Column::new("id", [1_i64, 2])]).unwrap();
     let program = sql::parse("Limit 1 clone Leaked use missing").unwrap();
-    let mut dynamic = DynamicExecutor::from_frame("input", input.clone());
+    let mut dynamic = DynamicEngine::from_frame("input", input.clone());
     assert!(dynamic.execute(&program).is_err());
     assert_eq!(dynamic.frame().height(), 2);
     assert!(!dynamic.input().contains_key("Leaked"));
@@ -88,7 +93,7 @@ fn executor_restore_all_state_after_a_failed_program() {
 #[test]
 fn root_facade_uses_dynamic_backend_without_polars() {
     use dfsql::{
-        Executor, Frame,
+        Frame,
         backend::dynamic::{Column, ColumnData},
     };
     let input = Frame::new(vec![
@@ -120,7 +125,7 @@ fn root_facade_uses_dynamic_backend_without_polars() {
 #[test]
 fn polars_backend_shadows_the_root_facade() {
     use dfsql::backend::dynamic::Column;
-    use dfsql::{Executor, Frame, MaterializedFrame};
+    use dfsql::{Frame, MaterializedFrame};
     let input = Frame::new(vec![
         Column::new("id", [3_i64, 1, 2]),
         Column::new("enabled", [true, false, true]),
@@ -143,9 +148,9 @@ fn polars_backend_shadows_the_root_facade() {
 #[cfg(feature = "polars-backend")]
 #[test]
 fn dynamic_backend_remains_available_when_polars_is_selected() {
-    use dfsql::backend::dynamic::{Column, Executor, Frame};
+    use dfsql::backend::dynamic::{Column, Engine, Frame};
     let input = Frame::new(vec![Column::new("id", [2_i64, 1])]).unwrap();
-    let mut executor = Executor::from_frame("table", input);
+    let mut executor = Engine::from_frame("table", input);
     executor.execute(&sql::parse("sort id").unwrap()).unwrap();
     assert_eq!(executor.frame().column("id").unwrap().values()[0], 1.into());
 }
@@ -211,7 +216,7 @@ fn polars_boundary_is_lossless_or_errors() {
 #[cfg(feature = "polars-backend")]
 #[test]
 fn invalid_numeric_literals_return_errors_instead_of_panicking() {
-    use dfsql::{Executor, Frame, backend::dynamic::Column};
+    use dfsql::{Frame, backend::dynamic::Column};
     let input = Frame::new(vec![Column::new("id", [1_i64])]).unwrap();
     let mut executor = Executor::from_frame("table", input);
     assert!(

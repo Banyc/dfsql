@@ -17,7 +17,7 @@ pub enum Error {
     #[error(transparent)]
     Dynamic(#[from] dynamic::Error),
     #[error("backend error: {0}")]
-    Backend(String),
+    Engine(String),
     #[error("data frame does not exist: {0}")]
     FrameNotFound(String),
 }

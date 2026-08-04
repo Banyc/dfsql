@@ -1,18 +1,18 @@
 use std::collections::HashMap;
 
-use dfsql::backend::dynamic::{Column, Error, Executor, Frame, Value};
+use dfsql::backend::dynamic::{Column, Engine, Error, Frame, Value};
 use dfsql::sql::{
-    S, SortOrder,
+    Program, SortOrder,
     expr::{Expr, SortByExpr, UnaryExpr, UnaryOperator},
-    stat::{
+    stmt::{
         CloneStat, FilterStat, GroupAggStat, JoinStat, LimitStat, SelectStat, SingleColJoinStat,
-        SingleColJoinType, SortStat, Stat, UseStat,
+        SingleColJoinType, SortStat, Stmt, UseStat,
     },
 };
 
-fn run(frame: Frame, statements: Vec<Stat>) -> Result<Frame, Error> {
-    let mut executor = Executor::from_frame("table", frame);
-    executor.execute(&S { statements })?;
+fn run(frame: Frame, statements: Vec<Stmt>) -> Result<Frame, Error> {
+    let mut executor = Engine::from_frame("table", frame);
+    executor.execute(&Program { statements })?;
     Ok(executor.frame().clone())
 }
 
@@ -30,15 +30,15 @@ fn executor_applies_row_and_select_statements_in_order() {
     let output = run(
         frame,
         vec![
-            Stat::Filter(FilterStat {
+            Stmt::Filter(FilterStat {
                 condition: Expr::Col("keep".into()),
             }),
-            Stat::Sort(SortStat {
+            Stmt::Sort(SortStat {
                 pairs: vec![(SortOrder::Desc, "value".into())],
             }),
-            Stat::Limit(LimitStat { rows: "2".into() }),
-            Stat::Reverse,
-            Stat::Select(SelectStat {
+            Stmt::Limit(LimitStat { rows: "2".into() }),
+            Stmt::Reverse,
+            Stmt::Select(SelectStat {
                 columns: vec![Expr::Col("value".into())],
             }),
         ],
@@ -50,7 +50,7 @@ fn executor_applies_row_and_select_statements_in_order() {
 #[test]
 fn executor_clone_and_use_manage_named_frames_without_aliasing() {
     let original = Frame::new(vec![Column::new("value", [1_i64, 2, 3])]).unwrap();
-    let mut executor = Executor::new(
+    let mut executor = Engine::new(
         "left",
         HashMap::from([
             ("left".into(), original),
@@ -62,13 +62,13 @@ fn executor_clone_and_use_manage_named_frames_without_aliasing() {
     )
     .unwrap();
     executor
-        .execute(&S {
+        .execute(&Program {
             statements: vec![
-                Stat::Clone(CloneStat {
+                Stmt::CloneFrame(CloneStat {
                     df_name: "saved".into(),
                 }),
-                Stat::Limit(LimitStat { rows: "1".into() }),
-                Stat::Use(UseStat {
+                Stmt::Limit(LimitStat { rows: "1".into() }),
+                Stmt::UseFrame(UseStat {
                     df_name: "right".into(),
                 }),
             ],
@@ -96,7 +96,7 @@ fn executor_groups_in_first_seen_order_and_excludes_group_keys_from_selectors() 
     .unwrap();
     let output = run(
         frame,
-        vec![Stat::GroupAgg(GroupAggStat {
+        vec![Stmt::GroupAgg(GroupAggStat {
             group_by: vec!["group".into()],
             agg: vec![Expr::Unary(Box::new(UnaryExpr {
                 operator: UnaryOperator::Sum,
@@ -124,14 +124,14 @@ fn executor_full_join_keeps_unmatched_rows_and_renames_collisions() {
         Column::new("value", ["right-2", "right-null", "right-3"]),
     ])
     .unwrap();
-    let mut executor = Executor::new(
+    let mut executor = Engine::new(
         "left",
         HashMap::from([("left".into(), left), ("right".into(), right)]),
     )
     .unwrap();
     executor
-        .execute(&S {
-            statements: vec![Stat::Join(JoinStat::SingleCol(SingleColJoinStat {
+        .execute(&Program {
+            statements: vec![Stmt::Join(JoinStat::SingleCol(SingleColJoinStat {
                 other: "right".into(),
                 ty: SingleColJoinType::Full,
                 left_on: Expr::Col("id".into()),
@@ -173,7 +173,7 @@ fn executor_rejects_sort_by_without_keys() {
     assert_eq!(
         run(
             frame,
-            vec![Stat::Select(SelectStat {
+            vec![Stmt::Select(SelectStat {
                 columns: vec![Expr::SortBy(Box::new(SortByExpr {
                     expr: Expr::Col("value".into()),
                     pairs: Vec::new(),

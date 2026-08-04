@@ -3,10 +3,10 @@ use crate::sql::expr::{Expr, can_start_expression, expr, lax_col_name};
 use crate::sql::TokenParseError;
 use crate::sql::lexer::{ExprKeyword, Literal, StatKeyword, Token};
 
-use crate::sql::{S, SortOrder, Tokens};
+use crate::sql::{Program, SortOrder, Tokens};
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Stat {
+pub enum Stmt {
     Select(SelectStat),
     GroupAgg(GroupAggStat),
     Filter(FilterStat),
@@ -14,16 +14,16 @@ pub enum Stat {
     Reverse,
     Sort(SortStat),
     Join(JoinStat),
-    Use(UseStat),
-    Clone(CloneStat),
+    UseFrame(UseStat),
+    CloneFrame(CloneStat),
 }
 
-pub(crate) fn parse_detailed(tokens: &[Token]) -> Result<S, TokenParseError> {
+pub(crate) fn parse_detailed(tokens: &[Token]) -> Result<Program, TokenParseError> {
     let mut input = tokens;
     let mut statements = Vec::new();
     while !input.is_empty() {
         let token_idx = tokens.len() - input.len();
-        match stat(&mut input) {
+        match stmt(&mut input) {
             Ok(s) => statements.push(s),
             Err(mut error) => {
                 error.offset += token_idx;
@@ -31,10 +31,10 @@ pub(crate) fn parse_detailed(tokens: &[Token]) -> Result<S, TokenParseError> {
             }
         }
     }
-    Ok(S { statements })
+    Ok(Program { statements })
 }
 
-fn stat(input: &mut Tokens<'_>) -> Result<Stat, TokenParseError> {
+fn stmt(input: &mut Tokens<'_>) -> Result<Stmt, TokenParseError> {
     let start = *input;
     let mut best = TokenParseError::new(0, format!("unexpected token {:?}", input.first()));
     macro_rules! attempt {
@@ -51,15 +51,15 @@ fn stat(input: &mut Tokens<'_>) -> Result<Stat, TokenParseError> {
             }
         }};
     }
-    attempt!(clone_stat, Stat::Clone);
-    attempt!(select_stat, Stat::Select);
-    attempt!(group_agg_stat, Stat::GroupAgg);
-    attempt!(filter_stat, Stat::Filter);
-    attempt!(limit_stat, Stat::Limit);
-    attempt!(reverse_stat, |stat| stat);
-    attempt!(sort_stat, Stat::Sort);
-    attempt!(join_stat, Stat::Join);
-    attempt!(use_stat, Stat::Use);
+    attempt!(clone_stat, Stmt::CloneFrame);
+    attempt!(select_stat, Stmt::Select);
+    attempt!(group_agg_stat, Stmt::GroupAgg);
+    attempt!(filter_stat, Stmt::Filter);
+    attempt!(limit_stat, Stmt::Limit);
+    attempt!(reverse_stat, |stmt| stmt);
+    attempt!(sort_stat, Stmt::Sort);
+    attempt!(join_stat, Stmt::Join);
+    attempt!(use_stat, Stmt::UseFrame);
     *input = start;
     Err(best)
 }
@@ -164,9 +164,9 @@ fn limit_stat(input: &mut Tokens<'_>) -> Result<LimitStat, String> {
 
 // ---- Reverse ----
 
-fn reverse_stat(input: &mut Tokens<'_>) -> Result<Stat, String> {
+fn reverse_stat(input: &mut Tokens<'_>) -> Result<Stmt, String> {
     expect_token(input, &Token::Stat(StatKeyword::Reverse))?;
-    Ok(Stat::Reverse)
+    Ok(Stmt::Reverse)
 }
 
 // ---- Sort ----
@@ -367,7 +367,7 @@ mod tests {
         let s = crate::sql::parse(src).unwrap();
         assert_eq!(
             s.statements,
-            vec![Stat::Select(SelectStat {
+            vec![Stmt::Select(SelectStat {
                 columns: vec![
                     Expr::Col(String::from("a")),
                     Expr::Exclude(crate::sql::expr::ExcludeExpr {
@@ -384,7 +384,7 @@ mod tests {
         let s = crate::sql::parse(src).unwrap();
         assert_eq!(
             s.statements,
-            vec![Stat::GroupAgg(GroupAggStat {
+            vec![Stmt::GroupAgg(GroupAggStat {
                 group_by: vec![String::from("foo"), String::from("bar")],
                 agg: vec![
                     Expr::Unary(Box::new(crate::sql::expr::UnaryExpr {
@@ -406,7 +406,7 @@ mod tests {
         let s = crate::sql::parse(src).unwrap();
         assert_eq!(
             s.statements,
-            vec![Stat::Filter(FilterStat {
+            vec![Stmt::Filter(FilterStat {
                 condition: Expr::Binary(Box::new(crate::sql::expr::BinaryExpr {
                     operator: crate::sql::expr::BinaryOperator::Eq,
                     left: Expr::Col(String::from("foo")),
@@ -420,12 +420,12 @@ mod tests {
     fn distinguishes_sort_expression_from_statement() {
         let parsed = crate::sql::parse("select sort value by order").unwrap();
         assert!(
-            matches!(parsed.statements.as_slice(), [Stat::Select(SelectStat { columns })] if matches!(columns.as_slice(), [Expr::SortBy(_)]))
+            matches!(parsed.statements.as_slice(), [Stmt::Select(SelectStat { columns })] if matches!(columns.as_slice(), [Expr::SortBy(_)]))
         );
         let parsed = crate::sql::parse("select id sort id").unwrap();
         assert!(matches!(
             parsed.statements.as_slice(),
-            [Stat::Select(_), Stat::Sort(_)]
+            [Stmt::Select(_), Stmt::Sort(_)]
         ));
     }
 }

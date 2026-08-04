@@ -23,23 +23,23 @@ pub(super) enum Error {
 }
 
 pub(crate) fn map_polars_backend_error(error: impl ToString) -> crate::backend::Error {
-    crate::backend::Error::Backend(error.to_string())
+    crate::backend::Error::Engine(error.to_string())
 }
 
 pub(crate) fn map_polars_executor_error(error: Error) -> crate::backend::Error {
     match error {
         Error::FrameNotFound(name) => crate::backend::Error::FrameNotFound(name),
-        error => crate::backend::Error::Backend(error.to_string()),
+        error => crate::backend::Error::Engine(error.to_string()),
     }
 }
 
 pub(crate) fn apply_stat(
     df: LazyFrame,
-    stat: &sql::stat::Stat,
+    stat: &sql::stmt::Stmt,
     others: &mut HashMap<String, super::Frame>,
 ) -> Result<LazyFrame, Error> {
     Ok(match stat {
-        sql::stat::Stat::Select(select) => {
+        sql::stmt::Stmt::Select(select) => {
             let columns = select
                 .columns
                 .iter()
@@ -47,7 +47,7 @@ pub(crate) fn apply_stat(
                 .collect::<Result<Vec<_>, _>>()?;
             df.select(columns)
         }
-        sql::stat::Stat::GroupAgg(group_agg) => {
+        sql::stmt::Stmt::GroupAgg(group_agg) => {
             let group_by: Vec<_> = group_agg.group_by.iter().map(String::as_str).collect();
             let agg = group_agg
                 .agg
@@ -56,26 +56,26 @@ pub(crate) fn apply_stat(
                 .collect::<Result<Vec<_>, _>>()?;
             df.group_by(group_by).agg(agg)
         }
-        sql::stat::Stat::Filter(filter) => {
+        sql::stmt::Stmt::Filter(filter) => {
             let condition = convert_expr(&filter.condition)?;
             df.filter(condition)
         }
-        sql::stat::Stat::Limit(limit) => {
+        sql::stmt::Stmt::Limit(limit) => {
             let rows = limit.rows.parse().map_err(|_| Error::InvalidValue {
                 operation: "limit",
                 value: limit.rows.clone(),
             })?;
             df.limit(rows)
         }
-        sql::stat::Stat::Reverse => df.reverse(),
-        sql::stat::Stat::Sort(sort) => {
+        sql::stmt::Stmt::Reverse => df.reverse(),
+        sql::stmt::Stmt::Sort(sort) => {
             let columns: Vec<_> = sort.pairs.iter().map(|(_, c)| c).collect();
             let descending = sort.pairs.iter().map(|(o, _)| matches!(o, SortOrder::Desc));
             let options = SortMultipleOptions::default().with_order_descending_multi(descending);
             df.sort(columns, options)
         }
-        sql::stat::Stat::Join(join) => match join {
-            sql::stat::JoinStat::SingleCol(join) => {
+        sql::stmt::Stmt::Join(join) => match join {
+            sql::stmt::JoinStat::SingleCol(join) => {
                 let other = others
                     .get(&join.other)
                     .ok_or_else(|| Error::FrameNotFound(join.other.to_string()))?
@@ -87,19 +87,19 @@ pub(crate) fn apply_stat(
                     None => left_on.clone(),
                 };
                 match join.ty {
-                    sql::stat::SingleColJoinType::Left => df.left_join(other, left_on, right_on),
-                    sql::stat::SingleColJoinType::Right => other.left_join(df, right_on, left_on),
-                    sql::stat::SingleColJoinType::Inner => df.inner_join(other, left_on, right_on),
-                    sql::stat::SingleColJoinType::Full => df.full_join(other, left_on, right_on),
+                    sql::stmt::SingleColJoinType::Left => df.left_join(other, left_on, right_on),
+                    sql::stmt::SingleColJoinType::Right => other.left_join(df, right_on, left_on),
+                    sql::stmt::SingleColJoinType::Inner => df.inner_join(other, left_on, right_on),
+                    sql::stmt::SingleColJoinType::Full => df.full_join(other, left_on, right_on),
                 }
             }
         },
-        sql::stat::Stat::Use(r#use) => others
+        sql::stmt::Stmt::UseFrame(r#use) => others
             .get(&r#use.df_name)
             .ok_or_else(|| Error::FrameNotFound(r#use.df_name.clone()))?
             .inner()
             .clone(),
-        sql::stat::Stat::Clone(clone) => {
+        sql::stmt::Stmt::CloneFrame(clone) => {
             let df_clone = df.clone();
             others.insert(clone.df_name.clone(), super::Frame::from_inner(df_clone));
             df

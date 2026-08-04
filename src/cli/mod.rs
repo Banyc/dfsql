@@ -1,20 +1,20 @@
-pub mod handler;
-pub mod highlighter;
-pub mod visual;
+pub mod repl_helper;
+pub mod session;
+pub mod terminal_color;
 
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
-use crate::cli::{handler::LineExecutor, visual::SqlHelper};
-use crate::file_ops::{
+use crate::cli::{repl_helper::SqlHelper, session::ReplSession};
+use crate::io::{
     atomic_file::StagedFile,
     read_df_file,
-    sql_file::{read_repl_sql_file, read_sql_file, stage_repl_sql_output},
+    sql_file::{read_repl_history, read_sql_file, stage_repl_sql_output},
     stage_df_output, write_df_output,
 };
-use crate::{Executor, MaterializedFrame};
+use crate::{MaterializedFrame, backend::PolarsExecutor};
 use anyhow::{Context, anyhow, bail};
 use clap::Parser;
 use rustyline::{Editor, error::ReadlineError};
@@ -54,7 +54,7 @@ impl Cli {
         }
         let first_input_name = first_input_name
             .ok_or_else(|| anyhow!("Require at least one input data frame from option --input"))?;
-        let mut executor = Executor::new(first_input_name, input).unwrap();
+        let mut executor = PolarsExecutor::new(first_input_name, input).unwrap();
         if let Some(sql_file) = &self.sql {
             if self.lazy {
                 bail!(
@@ -80,13 +80,13 @@ impl Cli {
         if let Some(output) = &self.output {
             reject_input_output(output, &input_paths)?;
         }
-        let mut handler = LineExecutor::new(executor);
+        let mut handler = ReplSession::new(executor);
         let mut rl = Editor::new()?;
         let lines = if let Some(output) = &self.output {
             let mut output = output.clone();
             output.set_extension(SQL_EXTENSION);
             if output.try_exists()? {
-                read_repl_sql_file(&output)?
+                read_repl_history(&output)?
             } else {
                 vec![]
             }
@@ -157,7 +157,7 @@ impl Cli {
 
     fn restore_repl_session(
         &self,
-        handler: &mut LineExecutor,
+        handler: &mut ReplSession,
         lines: impl IntoIterator<Item = String>,
         mut record_line: impl FnMut(&str),
     ) -> anyhow::Result<()> {
@@ -169,7 +169,7 @@ impl Cli {
         Ok(())
     }
 
-    fn display_and_write_repl_output(&self, handler: &LineExecutor) -> anyhow::Result<()> {
+    fn display_and_write_repl_output(&self, handler: &ReplSession) -> anyhow::Result<()> {
         let df = handler.frame().clone().collect()?;
         if let Some(output) = &self.output {
             write_repl_output(df.clone(), handler, output.clone())?;
@@ -209,7 +209,7 @@ fn reject_input_output(path: &Path, input_paths: &HashSet<PathBuf>) -> anyhow::R
     Ok(())
 }
 
-fn upgrade_df(line: String, handler: &mut LineExecutor) -> anyhow::Result<()> {
+fn upgrade_df(line: String, handler: &mut ReplSession) -> anyhow::Result<()> {
     if line.trim() == "undo" {
         return handler.undo();
     }
@@ -222,8 +222,8 @@ fn upgrade_df(line: String, handler: &mut LineExecutor) -> anyhow::Result<()> {
 
 fn upgrade_df_and_persist(
     line: String,
-    handler: &mut LineExecutor,
-    persist: impl FnOnce(&LineExecutor) -> anyhow::Result<()>,
+    handler: &mut ReplSession,
+    persist: impl FnOnce(&ReplSession) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let checkpoint = handler.checkpoint();
     let result = upgrade_df(line, handler).and_then(|()| persist(handler));
@@ -233,7 +233,7 @@ fn upgrade_df_and_persist(
     result
 }
 
-fn save(handler: &LineExecutor, path: &str, input_paths: &HashSet<PathBuf>) -> anyhow::Result<()> {
+fn save(handler: &ReplSession, path: &str, input_paths: &HashSet<PathBuf>) -> anyhow::Result<()> {
     let path = PathBuf::from(path);
     reject_input_output(&path, input_paths)?;
     let collected = handler.frame().clone().collect()?;
@@ -243,7 +243,7 @@ fn save(handler: &LineExecutor, path: &str, input_paths: &HashSet<PathBuf>) -> a
 
 fn write_repl_output(
     df: MaterializedFrame,
-    handler: &LineExecutor,
+    handler: &ReplSession,
     mut path: PathBuf,
 ) -> anyhow::Result<()> {
     let df_output = stage_df_output(df, &path)?;
@@ -257,9 +257,9 @@ mod tests {
     use super::*;
     use polars::prelude::IntoLazy;
 
-    fn handler() -> LineExecutor {
+    fn handler() -> ReplSession {
         let frame = crate::Frame::from_inner(polars::df!("id" => [2_i64, 2]).unwrap().lazy());
-        LineExecutor::new(Executor::from_frame("input", frame))
+        ReplSession::new(PolarsExecutor::from_frame("input", frame))
     }
 
     #[test]

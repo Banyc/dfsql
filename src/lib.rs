@@ -2,7 +2,7 @@ pub mod backend;
 #[cfg(feature = "cli")]
 pub mod cli;
 #[cfg(feature = "file-ops")]
-pub mod file_ops;
+pub mod io;
 pub mod sql;
-pub use backend::{Error, Executor, Frame, MaterializedFrame, Result};
-pub use sql::{ParseError, S, SortOrder, parse};
+pub use backend::{Error, Frame, MaterializedFrame, Result};
+pub use sql::{ParseError, Program, SortOrder, parse};
