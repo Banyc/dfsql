@@ -1,6 +1,6 @@
 [package]
 name = "dfsql"
-version = "0.17.0"
+version = "0.18.0"
 edition = "2024"
 description = "SQL REPL for Data Frames"
 license = "MIT"
@@ -14,7 +14,7 @@ hdv = { version = "0.7", default-features = false, optional = true }
 winnow = "1"
 clap = { version = "4", features = ["derive"], optional = true }
 
-polars = { version = "0.54.4", features = [
+polars = { version = "0.55", features = [
     "abs",
     "lazy",
     "regex",
