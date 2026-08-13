@@ -1,3 +1,4 @@
+#[cfg(feature = "polars-backend")]
 use super::atomic_file::StagedFile;
 #[cfg(feature = "polars-backend")]
 use super::atomic_file::stage_file;
@@ -49,7 +50,7 @@ pub fn read_df_file(path: impl AsRef<Path>) -> anyhow::Result<Frame> {
     let path = path.as_ref();
     let format = FileFormat::from_path(path)?;
     #[cfg(not(feature = "polars-backend"))]
-    panic!("{format:?} file operations require the 'polars-backend' feature");
+    bail!("{format:?} file operations require the 'polars-backend' feature");
     #[cfg(feature = "polars-backend")]
     match format {
         FileFormat::Csv => read_csv(path),
@@ -61,23 +62,25 @@ pub fn read_df_file(path: impl AsRef<Path>) -> anyhow::Result<Frame> {
 }
 
 pub fn write_df_output(frame: MaterializedFrame, path: impl AsRef<Path>) -> anyhow::Result<()> {
+    #[cfg(not(feature = "polars-backend"))]
+    {
+        let path = path.as_ref();
+        let format = FileFormat::from_path(path)?;
+        let _ = frame;
+        bail!("{format:?} file operations require the 'polars-backend' feature");
+    }
+    #[cfg(feature = "polars-backend")]
     stage_df_output(frame, path)?.commit()
 }
 
+#[cfg(feature = "polars-backend")]
 pub(crate) fn stage_df_output(
     frame: MaterializedFrame,
     path: impl AsRef<Path>,
 ) -> anyhow::Result<StagedFile> {
     let path = path.as_ref();
     let format = FileFormat::from_path(path)?;
-    #[cfg(not(feature = "polars-backend"))]
-    {
-        let _ = frame;
-        panic!("{format:?} file operations require the 'polars-backend' feature");
-    }
-    #[cfg(feature = "polars-backend")]
     let mut frame = frame;
-    #[cfg(feature = "polars-backend")]
     stage_file(path, move |output| match format {
         FileFormat::Csv => write_csv(&mut frame, output),
         FileFormat::Json => write_json(&mut frame, output),
@@ -233,8 +236,31 @@ mod tests {
 }
 
 #[cfg(all(test, not(feature = "polars-backend")))]
-#[test]
-#[should_panic(expected = "file operations require the 'polars-backend' feature")]
-fn recognized_format_panics_without_polars_backend() {
-    let _ = read_df_file("input.csv");
+mod no_polars_tests {
+    use super::*;
+
+    #[test]
+    fn recognized_read_format_returns_an_unsupported_backend_error() {
+        let error = match read_df_file("input.csv") {
+            Ok(_) => panic!("read unexpectedly succeeded without the Polars backend"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.to_string(),
+            "Csv file operations require the 'polars-backend' feature"
+        );
+    }
+
+    #[test]
+    fn recognized_write_format_returns_an_unsupported_backend_error() {
+        let frame = crate::backend::DynamicFrame::new(Vec::new())
+            .unwrap()
+            .to_materialized()
+            .unwrap();
+        let error = write_df_output(frame, "output.csv").unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Csv file operations require the 'polars-backend' feature"
+        );
+    }
 }

@@ -1,3 +1,4 @@
+#[cfg(feature = "polars-backend")]
 pub(crate) mod atomic_file;
 mod df_file;
 #[cfg(feature = "polars-backend")]
